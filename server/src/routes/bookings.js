@@ -23,6 +23,7 @@ import {
 import { confirmMockPayment, createPaymentIntent, refundPayment } from '../services/payments.js';
 import { notifyMany, notifyUser } from '../services/notify.js';
 import { findEligibleProviders } from '../services/assignment.js';
+import { quote, validatePropertyDetails } from '../services/pricing.js';
 import { emitJobOpened, emitJobUpdated } from '../realtime.js';
 
 export const bookingRouter = express.Router();
@@ -32,10 +33,10 @@ const addressSchema = z.object({
   label: z.string().trim().max(60).optional(),
   line1: z.string().trim().min(3, 'Street address is required').max(200),
   line2: z.string().trim().max(200).optional(),
-  city: z.string().trim().min(2, 'Suburb or city is required').max(120),
-  region: z.string().trim().min(2, 'State is required').max(120),
-  postcode: z.string().trim().min(3, 'Postcode is required').max(12),
-  country: z.string().trim().length(2).default('AU'),
+  city: z.string().trim().min(2, 'City is required').max(120),
+  state: z.string().trim().min(2, 'State is required').max(2).toUpperCase(),
+  zip: z.string().trim().regex(/^\d{5}(-\d{4})?$/, 'Enter a 5-digit ZIP code'),
+  country: z.string().trim().length(2).default('US'),
   notes: z.string().trim().max(500).optional(),
 });
 
@@ -70,6 +71,15 @@ const createBookingSchema = z.object({
   // Either reuse a saved address or send a new one.
   addressId: z.string().uuid().optional(),
   address: addressSchema.optional(),
+
+  // Property details that feed the price (SOP §3.3).
+  squareFeet: z.coerce.number().int().positive().optional(),
+  yearBuilt: z.coerce.number().int().optional(),
+  addOnIds: z.array(z.string().uuid()).max(20).default([]),
+
+  // Who is paying (SOP §3.5).
+  payerType: z.enum(['CUSTOMER', 'REALTOR', 'COMPANY']).default('CUSTOMER'),
+  payerName: z.string().trim().max(160).optional(),
 });
 
 bookingRouter.post(
@@ -98,23 +108,42 @@ bookingRouter.post(
 
     // Which market is this? No live ServiceArea means we do not operate there.
     const area = await prisma.serviceArea.findFirst({
-      where: { postcode: address.postcode, isActive: true },
+      where: { zip: address.zip, isActive: true },
     });
     if (!area) {
       throw badRequest(
-        `We don't cover postcode ${address.postcode} yet — we'll let you know when we do`,
-        [{ field: 'address.postcode', message: 'Outside our service areas' }],
+        `We don't cover zip ${address.zip} yet — we'll let you know when we do`,
+        [{ field: 'address.zip', message: 'Outside our service areas' }],
       );
     }
 
     const slot = await validateSlot({
       serviceId: service.id,
-      postcode: address.postcode,
+      zip: address.zip,
       start: body.scheduledStart,
     });
     if (!slot.ok) {
       throw badRequest(slot.reason, [{ field: 'scheduledStart', message: slot.reason }]);
     }
+
+    // Property details drive the price, so they are validated against what
+    // this particular service actually asks for.
+    const detailErrors = validatePropertyDetails(service, {
+      squareFeet: body.squareFeet,
+      yearBuilt: body.yearBuilt,
+    });
+    if (detailErrors.length) {
+      throw badRequest('We need a couple more details about the property', detailErrors);
+    }
+
+    // Price the job server-side. The browser shows an estimate; this is the
+    // number that binds, so a tampered payload cannot buy a cheap inspection.
+    const priced = await quote({
+      service,
+      squareFeet: body.squareFeet,
+      yearBuilt: body.yearBuilt,
+      addOnIds: body.addOnIds,
+    });
 
     const job = await prisma.job.create({
       data: {
@@ -127,10 +156,16 @@ bookingRouter.post(
         scheduledStart: slot.start,
         scheduledEnd: slot.end,
         customerNotes: body.customerNotes ?? null,
-        // Snapshot the price. A later catalogue change must not alter what
-        // this customer was quoted.
-        priceCents: service.basePriceCents,
-        providerPayCents: service.providerPayCents,
+        squareFeet: body.squareFeet ?? null,
+        yearBuilt: body.yearBuilt ?? null,
+        payerType: body.payerType,
+        payerName: body.payerName ?? null,
+        // Snapshot the price AND how it was reached. A later catalogue or fee
+        // change must not alter what this customer was quoted, nor what the
+        // inspector was promised.
+        priceCents: priced.priceCents,
+        providerPayCents: priced.providerPayCents,
+        priceBreakdown: priced.breakdown,
         events: {
           create: {
             toStatus: 'PENDING_PAYMENT',
@@ -276,7 +311,7 @@ bookingRouter.get(
       orderBy: { scheduledStart: 'desc' },
       include: {
         service: { select: { name: true, slug: true } },
-        address: { select: { line1: true, city: true, postcode: true } },
+        address: { select: { line1: true, city: true, zip: true } },
         provider: { select: { businessName: true } },
         payment: { select: { status: true, amountCents: true } },
       },

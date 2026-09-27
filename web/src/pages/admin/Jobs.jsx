@@ -82,7 +82,7 @@ export default function AdminJobs() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Reference, customer name, email or postcode"
+            placeholder="Reference, customer name, email or zip"
             className="flex-1"
           />
           <Button type="submit" variant="ink">
@@ -163,7 +163,7 @@ export default function AdminJobs() {
                           <td className="ref text-[12px] whitespace-nowrap">
                             {dateTimeFull(j.scheduledStart)}
                             <span className="block text-[var(--color-ink-3)]">
-                              {j.address.city} {j.address.postcode}
+                              {j.address.city} {j.address.zip}
                             </span>
                           </td>
                           <td>

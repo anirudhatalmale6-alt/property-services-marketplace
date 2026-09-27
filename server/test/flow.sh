@@ -47,16 +47,16 @@ assert_has "API reports healthy" '"ok":true' "$H"
 
 note "2. Public catalogue (no auth)"
 C=$(curl -s "$API/api/catalog/services")
-assert_has "services listed" 'Pre-Purchase Building Inspection' "$C"
-SERVICE_ID=$(printf '%s' "$C" | grep -o '"id":"[0-9a-f-]*","name":"Pre-Purchase Building Inspection"' \
+assert_has "services listed" 'Full Home Inspection' "$C"
+SERVICE_ID=$(printf '%s' "$C" | grep -o '"id":"[0-9a-f-]*","name":"Full Home Inspection"' \
   | head -1 | cut -d'"' -f4)
 [ -n "$SERVICE_ID" ] && ok "service id resolved" || bad "could not resolve service id"
 
 note "3. Coverage check"
-COV=$(curl -s "$API/api/catalog/coverage?postcode=4051")
-assert_has "4051 is covered" '"covered":true' "$COV"
-NOCOV=$(curl -s "$API/api/catalog/coverage?postcode=9999")
-assert_has "9999 is not covered" '"covered":false' "$NOCOV"
+COV=$(curl -s "$API/api/catalog/coverage?zip=75201")
+assert_has "75201 is covered" '"covered":true' "$COV"
+NOCOV=$(curl -s "$API/api/catalog/coverage?zip=99999")
+assert_has "99999 is not covered" '"covered":false' "$NOCOV"
 
 note "4. Auth"
 BADLOGIN=$(curl -s -X POST "$API/api/auth/login" -H 'Content-Type: application/json' \
@@ -75,33 +75,57 @@ ANON=$(curl -s "$API/api/bookings")
 assert_has "anonymous blocked from bookings" 'UNAUTHORIZED' "$ANON"
 
 note "6. Availability"
-AV=$(curl -s "$API/api/catalog/availability?serviceId=$SERVICE_ID&postcode=4051&days=7")
-assert_has "slots offered for a covered postcode" '"slots"' "$AV"
+AV=$(curl -s "$API/api/catalog/availability?serviceId=$SERVICE_ID&zip=75201&days=7")
+assert_has "slots offered for a covered ZIP" '"slots"' "$AV"
 SLOT=$(printf '%s' "$AV" | json start)
 [ -n "$SLOT" ] && ok "slot resolved: $SLOT" || bad "no slot returned"
 
-AV_UNCOVERED=$(curl -s "$API/api/catalog/availability?serviceId=$SERVICE_ID&postcode=9999&days=7")
-assert_has "uncovered postcode offers nothing" '"totalSlots":0' "$AV_UNCOVERED"
+AV_UNCOVERED=$(curl -s "$API/api/catalog/availability?serviceId=$SERVICE_ID&zip=99999&days=7")
+assert_has "uncovered ZIP offers nothing" '"totalSlots":0' "$AV_UNCOVERED"
+
+note "6b. Configurable pricing (SOP 3.6 / 10)"
+# 2,200 sq ft + 1995 build: base 350 + 100 tier = 450, no age surcharge yet.
+Q1=$(curl -s -X POST "$API/api/catalog/quote" -H 'Content-Type: application/json' \
+  -d "{\"serviceId\":\"$SERVICE_ID\",\"squareFeet\":2200,\"yearBuilt\":1995}")
+assert_has "quote prices a 2,200 sq ft home at \$450" '"priceCents":45000' "$Q1"
+assert_has "quote is itemised" '2,000' "$Q1"
+assert_missing "quote never exposes the platform cut" 'platformFee' "$Q1"
+assert_missing "quote never exposes inspector pay" 'providerPay' "$Q1"
+
+# A bigger, older house must cost more — proving the rules actually fire.
+Q2=$(curl -s -X POST "$API/api/catalog/quote" -H 'Content-Type: application/json' \
+  -d "{\"serviceId\":\"$SERVICE_ID\",\"squareFeet\":4200,\"yearBuilt\":1940}")
+# base 350 + 4,000+ tier 325 + over-75 band 100 = 775. Only the HIGHEST age
+# band applies, so the over-40 rule must NOT also be added.
+assert_has "larger, older home is priced higher" '"priceCents":77500' "$Q2"
+assert_missing "age bands are not cumulative" 'over 40 years' "$Q2"
 
 note "7. Booking"
 BK=$(as cust -X POST "$API/api/bookings" -H 'Content-Type: application/json' -d "{
   \"serviceId\":\"$SERVICE_ID\",
   \"scheduledStart\":\"$SLOT\",
   \"customerNotes\":\"Smoke test booking\",
-  \"address\":{\"line1\":\"7 Test Street\",\"city\":\"Brisbane\",\"region\":\"QLD\",\"postcode\":\"4051\"}
+  \"squareFeet\":2200, \"yearBuilt\":1995,
+  \"address\":{\"label\":\"[smoke test]\",\"line1\":\"7 Test Street\",\"city\":\"Dallas\",\"state\":\"TX\",\"zip\":\"75201\"}
 }")
 assert_has "booking created awaiting payment" 'PENDING_PAYMENT' "$BK"
 JOB_ID=$(printf '%s' "$BK" | json id)
 REF=$(printf '%s' "$BK" | json reference)
 [ -n "$JOB_ID" ] && ok "job id $JOB_ID ($REF)" || bad "no job id returned"
 
-note "8. Booking an uncovered postcode is refused"
+note "8. Booking an uncovered ZIP is refused"
 BADAREA=$(as cust -X POST "$API/api/bookings" -H 'Content-Type: application/json' -d "{
   \"serviceId\":\"$SERVICE_ID\",
   \"scheduledStart\":\"$SLOT\",
-  \"address\":{\"line1\":\"1 Nowhere Rd\",\"city\":\"Nowhere\",\"region\":\"XX\",\"postcode\":\"9999\"}
+  \"squareFeet\":2200, \"yearBuilt\":1995,
+  \"address\":{\"label\":\"[smoke test]\",\"line1\":\"1 Nowhere Rd\",\"city\":\"Nowhere\",\"state\":\"XX\",\"zip\":\"99999\"}
 }")
-assert_has "outside-area booking rejected" "don't cover postcode 9999" "$BADAREA"
+assert_has "outside-area booking rejected" "don't cover zip 99999" "$BADAREA"
+
+note "8b. The booking is priced by the rules, not the base price"
+JOB=$(as cust "$API/api/bookings/$JOB_ID")
+assert_has "job stores the itemised breakdown" 'priceBreakdown' "$JOB"
+assert_has "job charged the rule-based price" '"priceCents":45000' "$JOB"
 
 note "9. A job awaiting payment is NOT on the marketplace"
 login provider@example.com prov > /dev/null
@@ -180,6 +204,22 @@ assert_has "pending provider awaits review" 'Okafor' "$PQ"
 JUNK=$(as adm "$API/api/admin/jobs?status=NOT_A_STATUS")
 assert_has "invalid status filter is a validation error" 'BAD_REQUEST' "$JUNK"
 assert_missing "invalid filter leaks no query internals" 'prisma\.' "$JUNK"
+
+note "21b. The platform fee is configuration, not code"
+SPLIT=$(as adm "$API/api/admin/settings/payout")
+assert_has "split is readable" 'inspectorPercent' "$SPLIT"
+NEWSPLIT=$(as adm -X PUT "$API/api/admin/settings/payout" \
+  -H 'Content-Type: application/json' -d '{"inspectorPercent":75}')
+assert_has "split is changeable" '"inspectorPercent":75' "$NEWSPLIT"
+# A new booking must use the new split; existing jobs must not change.
+Q3=$(curl -s -X POST "$API/api/catalog/quote" -H 'Content-Type: application/json' \
+  -d "{\"serviceId\":\"$SERVICE_ID\",\"squareFeet\":2200,\"yearBuilt\":1995}")
+assert_has "customer price unaffected by the split" '"priceCents":45000' "$Q3"
+JOBAFTER=$(as cust "$API/api/bookings/$JOB_ID")
+assert_has "already-booked job keeps its original payout" '"providerPayCents":36000' "$JOBAFTER"
+# Put it back so the suite is re-runnable.
+as adm -X PUT "$API/api/admin/settings/payout" \
+  -H 'Content-Type: application/json' -d '{"inspectorPercent":80}' > /dev/null
 
 note "22. Admin releases the payout"
 POUTS=$(as adm "$API/api/admin/payouts?status=PENDING")

@@ -4,20 +4,20 @@ import { api } from '../lib/api.js';
 import { money, duration } from '../lib/format.js';
 import { Badge, Button, Card, Eyebrow, Input, Loading, ErrorState } from '../components/ui.jsx';
 
-/** Postcode check on the hero — the first question every customer has. */
+/** ZIP code check on the hero — the first question every customer has. */
 function CoverageCheck() {
-  const [postcode, setPostcode] = useState('');
+  const [zip, setZip] = useState('');
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
 
   const check = async (e) => {
     e.preventDefault();
-    if (postcode.trim().length < 3) return;
+    if (zip.trim().length < 3) return;
     setBusy(true);
     setResult(null);
     try {
-      setResult(await api.catalog.coverage(postcode.trim()));
+      setResult(await api.catalog.coverage(zip.trim()));
     } catch (err) {
       setResult({ covered: false, error: err.message });
     } finally {
@@ -27,21 +27,21 @@ function CoverageCheck() {
 
   return (
     <div className="surface ticked p-4 sm:p-5">
-      <Eyebrow className="mb-2.5">Check your postcode</Eyebrow>
+      <Eyebrow className="mb-2.5">Check your zip</Eyebrow>
       <form onSubmit={check} className="flex gap-2">
         <Input
-          value={postcode}
+          value={zip}
           onChange={(e) => {
-            setPostcode(e.target.value);
+            setZip(e.target.value);
             setResult(null);
           }}
           placeholder="e.g. 4051"
           inputMode="numeric"
-          aria-label="Postcode"
+          aria-label="ZIP code"
           maxLength={12}
           className="flex-1"
         />
-        <Button type="submit" variant="ink" disabled={busy || postcode.trim().length < 3}>
+        <Button type="submit" variant="ink" disabled={busy || zip.trim().length < 3}>
           {busy ? '…' : 'Check'}
         </Button>
       </form>
@@ -54,7 +54,7 @@ function CoverageCheck() {
                 <span className="badge badge-go mr-2">Covered</span>
                 We service{' '}
                 <strong>
-                  {result.area.name}, {result.area.region}
+                  {result.area.name}, {result.area.state}
                 </strong>
                 .
               </p>
@@ -65,7 +65,7 @@ function CoverageCheck() {
           ) : (
             <p className="text-[14px]">
               <span className="badge badge-mute mr-2">Not yet</span>
-              We&apos;re not in {postcode.trim()} yet — we&apos;re expanding, so check back soon.
+              We&apos;re not in {zip.trim()} yet — we&apos;re expanding, so check back soon.
             </p>
           )}
         </div>
@@ -112,7 +112,7 @@ export default function Home() {
 
           <ul className="grid sm:grid-cols-3 gap-x-5 gap-y-3">
             {[
-              ['01', 'Licence & insurance checked', 'Every provider is verified before they take a single job.'],
+              ['01', 'License & insurance checked', 'Every provider is verified before they take a single job.'],
               ['02', 'One fixed price', 'What you see at checkout is what you pay. No call-out surprises.'],
               ['03', 'Report on file', 'Photos and documents attached to your booking, permanently.'],
             ].map(([n, t, d]) => (
@@ -214,7 +214,7 @@ export default function Home() {
 
             <ul className="space-y-3">
               {[
-                'Set your own services and suburbs',
+                'Set your own services and ZIP codes',
                 'See exactly what each job pays before you accept',
                 'No bidding, no undercutting — one fixed rate',
                 'Earnings page shows pending and paid, always',

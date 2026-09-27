@@ -32,13 +32,14 @@ export default function AdminCoverage() {
       <PageHead
         eyebrow="Configuration"
         title="Coverage &amp; pricing"
-        sub="Open a new market by adding its postcode. Change what a service costs and what it pays."
+        sub="Open a new market by adding its zip. Change what a service costs and what it pays."
       />
 
       <div className="flex gap-2 mb-5">
         {[
           ['areas', 'Service areas'],
           ['services', 'Services & pricing'],
+          ['split', 'Platform fee'],
         ].map(([v, label]) => (
           <button key={v} onClick={() => setTab(v)} className={`chip px-3.5 ${tab === v ? 'chip-on' : ''}`}>
             {label}
@@ -46,8 +47,153 @@ export default function AdminCoverage() {
         ))}
       </div>
 
-      {tab === 'areas' ? <Areas /> : <Services />}
+      {tab === 'areas' && <Areas />}
+      {tab === 'services' && <Services />}
+      {tab === 'split' && <PlatformFee />}
     </div>
+  );
+}
+
+/* ----------------------------------------------------------- platform fee */
+
+/**
+ * SOP §10: "The system must not hard-code a fixed fee percentage."
+ * This screen is the proof — the split is one stored number the business owns.
+ */
+function PlatformFee() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    setError(null);
+    api.admin
+      .payoutSettings()
+      .then((r) => {
+        setData(r);
+        setValue(String(r.inspectorPercent));
+      })
+      .catch(setError);
+  }, []);
+  useEffect(load, [load]);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.admin.setPayoutSettings(Number(value));
+      setData(r);
+      setNotice(r.message);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (error && !data) return <ErrorState error={error} onRetry={load} />;
+  if (!data) return <Loading label="Loading fee settings" />;
+
+  const pct = Number(value);
+  const valid = Number.isFinite(pct) && pct >= 0 && pct <= 100;
+  // A worked example on a round number makes the split concrete.
+  const exampleCents = 55_000;
+
+  return (
+    <>
+      {notice && (
+        <Alert tone="go" className="mb-5">
+          {notice}
+        </Alert>
+      )}
+      {error && (
+        <Alert tone="stop" className="mb-5">
+          {error.message}
+        </Alert>
+      )}
+
+      <div className="grid md:grid-cols-[1fr_1fr] gap-5">
+        <Card className="p-4 sm:p-5" ticked>
+          <Eyebrow className="mb-2.5">Default inspector share</Eyebrow>
+          <p className="text-[14px] text-[var(--color-ink-2)] mb-4">
+            The share of every booking that goes to the inspector. The rest is your platform
+            revenue. Individual services can override this on the Services tab.
+          </p>
+
+          <Field label="Inspector keeps (%)" required>
+            <Input
+              type="number"
+              step="0.25"
+              min="0"
+              max="100"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+          </Field>
+
+          <Button
+            variant="primary"
+            className="mt-4"
+            onClick={save}
+            disabled={busy || !valid || pct === data.inspectorPercent}
+          >
+            {busy ? <Spinner /> : null}
+            Save split
+          </Button>
+
+          <p className="text-[12.5px] text-[var(--color-ink-3)] mt-3.5">
+            Changing this affects new bookings only. Jobs already booked keep the split they were
+            quoted at, so nobody&apos;s pay changes retroactively.
+          </p>
+        </Card>
+
+        <Card className="p-4 sm:p-5">
+          <Eyebrow className="mb-3.5">On a {moneyExact(exampleCents, 'USD')} inspection</Eyebrow>
+          {valid ? (
+            <>
+              <div className="rule pt-2">
+                <div className="flex justify-between py-2">
+                  <span className="label mb-0">Customer pays</span>
+                  <span className="ref">{moneyExact(exampleCents, 'USD')}</span>
+                </div>
+                <div className="flex justify-between py-2">
+                  <span className="label mb-0">Inspector receives</span>
+                  <span className="ref" style={{ color: 'var(--color-go)' }}>
+                    {moneyExact(Math.round((exampleCents * pct) / 100), 'USD')}
+                  </span>
+                </div>
+                <div className="flex justify-between py-2">
+                  <span className="label mb-0">Your gross share</span>
+                  <span className="ref" style={{ color: 'var(--color-hivis-dark)' }}>
+                    {moneyExact(exampleCents - Math.round((exampleCents * pct) / 100), 'USD')}
+                  </span>
+                </div>
+              </div>
+
+              <span
+                className="flex mt-4 h-2.5 overflow-hidden"
+                style={{ border: '1px solid var(--color-rule-strong)' }}
+              >
+                <span style={{ width: `${pct}%`, background: 'var(--color-go)' }} />
+                <span style={{ width: `${100 - pct}%`, background: 'var(--color-hivis)' }} />
+              </span>
+              <p className="ref text-[11px] text-[var(--color-ink-3)] mt-2">
+                INSPECTOR {pct}% · PLATFORM {(100 - pct).toFixed(2).replace(/\.00$/, '')}%
+              </p>
+            </>
+          ) : (
+            <p className="text-[var(--color-stop)] text-[14px]">Enter a percentage between 0 and 100.</p>
+          )}
+
+          <p className="text-[12.5px] text-[var(--color-ink-3)] mt-4 rule pt-3">
+            Processor fees, refunds and taxes are recorded separately against each payment, so this
+            figure is your gross share rather than net profit.
+          </p>
+        </Card>
+      </div>
+    </>
   );
 }
 
@@ -59,7 +205,7 @@ function Areas() {
   const [notice, setNotice] = useState(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ name: '', postcode: '', city: '', region: '', country: 'AU' });
+  const [form, setForm] = useState({ name: '', zip: '', city: '', state: '', country: 'US' });
 
   const load = useCallback(() => {
     setError(null);
@@ -73,14 +219,14 @@ function Areas() {
     try {
       await api.admin.createArea({
         name: form.name.trim(),
-        postcode: form.postcode.trim(),
+        zip: form.zip.trim(),
         city: form.city.trim(),
-        region: form.region.trim().toUpperCase(),
+        state: form.state.trim().toUpperCase(),
         country: form.country.trim().toUpperCase(),
       });
-      setNotice(`${form.name.trim()} is now live — customers in ${form.postcode.trim()} can book.`);
+      setNotice(`${form.name.trim()} is now live — customers in ${form.zip.trim()} can book.`);
       setOpen(false);
-      setForm({ name: '', postcode: '', city: '', region: '', country: 'AU' });
+      setForm({ name: '', zip: '', city: '', state: '', country: 'US' });
       load();
     } catch (e) {
       setError(e);
@@ -105,7 +251,7 @@ function Areas() {
 
   // Group by state so a national footprint stays readable.
   const byRegion = data.areas.reduce((acc, a) => {
-    (acc[a.region] ||= []).push(a);
+    (acc[a.state] ||= []).push(a);
     return acc;
   }, {});
 
@@ -133,10 +279,10 @@ function Areas() {
       </div>
 
       <div className="space-y-5">
-        {Object.entries(byRegion).map(([region, areas]) => (
-          <Card key={region}>
+        {Object.entries(byRegion).map(([state, areas]) => (
+          <Card key={state}>
             <div className="p-3.5 border-b flex items-center justify-between">
-              <Eyebrow>{region}</Eyebrow>
+              <Eyebrow>{state}</Eyebrow>
               <span className="ref text-[11.5px] text-[var(--color-ink-3)]">
                 {areas.length} AREA{areas.length === 1 ? '' : 'S'}
               </span>
@@ -146,7 +292,7 @@ function Areas() {
                 <thead>
                   <tr>
                     <th>Area</th>
-                    <th>Postcode</th>
+                    <th>ZIP code</th>
                     <th>City</th>
                     <th className="text-right">Providers</th>
                     <th className="text-right">Jobs</th>
@@ -158,7 +304,7 @@ function Areas() {
                   {areas.map((a) => (
                     <tr key={a.id}>
                       <td className="font-semibold">{a.name}</td>
-                      <td className="ref">{a.postcode}</td>
+                      <td className="ref">{a.zip}</td>
                       <td>{a.city}</td>
                       <td className="text-right ref">
                         {a._count.providers === 0 ? (
@@ -189,7 +335,7 @@ function Areas() {
 
       {data.areas.some((a) => a.isActive && a._count.providers === 0) && (
         <Alert tone="hold" className="mt-5" title="Some live areas have no providers">
-          A customer can book in these postcodes but nobody will be able to accept the job — it will
+          A customer can book in these ZIP codes but nobody will be able to accept the job — it will
           land in the exceptions queue. Either recruit providers there, or close the area until you
           have coverage.
         </Alert>
@@ -207,7 +353,7 @@ function Areas() {
             <Button
               variant="primary"
               onClick={create}
-              disabled={busy || !form.name || !form.postcode || !form.city || !form.region}
+              disabled={busy || !form.name || !form.zip || !form.city || !form.state}
             >
               {busy ? <Spinner /> : null}
               Open market
@@ -216,18 +362,18 @@ function Areas() {
         }
       >
         <p className="text-[14px] mb-4">
-          One postcode per area. As soon as you save it, customers there can get a price and book —
+          One ZIP code per area. As soon as you save it, customers there can get a price and book —
           so add your providers&apos; coverage first, or the jobs will have nobody to take them.
         </p>
         <div className="grid gap-3.5">
-          <Field label="Area name" required hint="How it reads to your team, e.g. “Newcastle West”.">
+          <Field label="Area name" required hint="How it reads to your team, e.g. “North Dallas”.">
             <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </Field>
           <div className="grid grid-cols-2 gap-3.5">
-            <Field label="Postcode" required>
+            <Field label="ZIP code" required>
               <Input
-                value={form.postcode}
-                onChange={(e) => setForm({ ...form, postcode: e.target.value })}
+                value={form.zip}
+                onChange={(e) => setForm({ ...form, zip: e.target.value })}
                 inputMode="numeric"
               />
             </Field>
@@ -245,8 +391,8 @@ function Areas() {
             </Field>
             <Field label="State" required>
               <Input
-                value={form.region}
-                onChange={(e) => setForm({ ...form, region: e.target.value })}
+                value={form.state}
+                onChange={(e) => setForm({ ...form, state: e.target.value })}
                 placeholder="NSW"
               />
             </Field>
@@ -304,9 +450,9 @@ function Services() {
               <tr>
                 <th>Service</th>
                 <th>Category</th>
-                <th className="text-right">Customer pays</th>
-                <th className="text-right">Provider gets</th>
-                <th className="text-right">Margin</th>
+                <th className="text-right">Base price</th>
+                <th>Inspector payout</th>
+                <th className="text-right">Your share</th>
                 <th>On site</th>
                 <th>Report</th>
                 <th>Status</th>
@@ -315,20 +461,44 @@ function Services() {
             </thead>
             <tbody>
               {data.services.map((s) => {
-                const margin = s.basePriceCents - s.providerPayCents;
-                const pct = s.basePriceCents ? Math.round((margin / s.basePriceCents) * 100) : 0;
+                // Mirrors the server rule: a service without its own percentage
+                // inherits the global default.
+                const bp =
+                  s.payoutMode === 'PERCENT'
+                    ? (s.payoutPercentBp ?? data.defaultPayoutPercentBp)
+                    : null;
+                const payoutLabel =
+                  s.payoutMode === 'FIXED'
+                    ? moneyExact(s.providerPayCents ?? 0, data.currency)
+                    : `${(bp / 100).toFixed(2).replace(/\.00$/, '')}%`;
+                const sharePct = bp != null ? (10000 - bp) / 100 : null;
+                const rules = (s.priceRules ?? []).filter((r) => r.isActive);
                 return (
                   <tr key={s.id}>
                     <td className="font-semibold">
                       {s.name}
                       <span className="block ref text-[11px] text-[var(--color-ink-3)]">{s.slug}</span>
+                      {rules.length > 0 && (
+                        <span className="block text-[11.5px] text-[var(--color-ink-3)]">
+                          {rules.filter((r) => r.kind === 'SQFT_TIER').length} size tiers ·{' '}
+                          {rules.filter((r) => r.kind === 'ADD_ON').length} add-ons
+                        </span>
+                      )}
                     </td>
                     <td>{s.category.name}</td>
                     <td className="text-right ref">{moneyExact(s.basePriceCents, data.currency)}</td>
-                    <td className="text-right ref">{moneyExact(s.providerPayCents, data.currency)}</td>
+                    <td>
+                      <span className="ref">{payoutLabel}</span>
+                      <span className="block text-[11px] text-[var(--color-ink-3)]">
+                        {s.payoutMode === 'FIXED'
+                          ? 'flat per job'
+                          : s.payoutPercentBp != null
+                            ? 'service override'
+                            : 'global default'}
+                      </span>
+                    </td>
                     <td className="text-right ref">
-                      {moneyExact(margin, data.currency)}
-                      <span className="block text-[11px] text-[var(--color-ink-3)]">{pct}%</span>
+                      {sharePct != null ? `${sharePct}%` : '—'}
                     </td>
                     <td className="ref">{s.durationMinutes}m</td>
                     <td>{s.requiresReport ? <Badge tone="badge-info">Yes</Badge> : '—'}</td>
@@ -385,7 +555,12 @@ function ServiceForm({ service, categories, currency, onClose, onSaved }) {
     shortDescription: service?.shortDescription ?? '',
     description: service?.description ?? '',
     price: service ? (service.basePriceCents / 100).toFixed(2) : '',
-    pay: service ? (service.providerPayCents / 100).toFixed(2) : '',
+    payoutMode: service?.payoutMode ?? 'PERCENT',
+    payoutPercent:
+      service?.payoutPercentBp != null ? String(service.payoutPercentBp / 100) : '',
+    pay: service?.providerPayCents != null ? (service.providerPayCents / 100).toFixed(2) : '',
+    collectsSquareFeet: service?.collectsSquareFeet ?? false,
+    collectsYearBuilt: service?.collectsYearBuilt ?? false,
     durationMinutes: service?.durationMinutes ?? 60,
     requiresReport: service?.requiresReport ?? true,
     isActive: service?.isActive ?? true,
@@ -394,8 +569,10 @@ function ServiceForm({ service, categories, currency, onClose, onSaved }) {
   const [error, setError] = useState(null);
 
   const priceCents = Math.round(Number(form.price) * 100);
-  const payCents = Math.round(Number(form.pay) * 100);
-  const payTooHigh = Number.isFinite(priceCents) && Number.isFinite(payCents) && payCents > priceCents;
+  const payCents = form.pay === '' ? null : Math.round(Number(form.pay) * 100);
+  const isFixed = form.payoutMode === 'FIXED';
+  const payTooHigh = isFixed && payCents != null && payCents > priceCents;
+  const fixedMissing = isFixed && (payCents == null || !Number.isFinite(payCents));
 
   const save = async () => {
     setBusy(true);
@@ -408,10 +585,19 @@ function ServiceForm({ service, categories, currency, onClose, onSaved }) {
         shortDescription: form.shortDescription.trim(),
         description: form.description.trim(),
         basePriceCents: priceCents,
-        providerPayCents: payCents,
+        payoutMode: form.payoutMode,
+        // A blank percentage means "inherit the global default" — sent as null
+        // rather than 0, which would pay the inspector nothing.
+        payoutPercentBp:
+          form.payoutMode === 'PERCENT' && form.payoutPercent !== ''
+            ? Math.round(Number(form.payoutPercent) * 100)
+            : null,
+        providerPayCents: form.payoutMode === 'FIXED' ? payCents : null,
         durationMinutes: Number(form.durationMinutes),
         requiresReport: form.requiresReport,
         isActive: form.isActive,
+        collectsSquareFeet: form.collectsSquareFeet,
+        collectsYearBuilt: form.collectsYearBuilt,
       };
       if (isNew) {
         await api.admin.createService(payload);
@@ -434,8 +620,8 @@ function ServiceForm({ service, categories, currency, onClose, onSaved }) {
     form.shortDescription.trim().length > 1 &&
     form.description.trim().length > 1 &&
     priceCents >= 0 &&
-    payCents >= 0 &&
-    !payTooHigh;
+    !payTooHigh &&
+    !fixedMissing;
 
   return (
     <Modal
@@ -525,20 +711,53 @@ function ServiceForm({ service, categories, currency, onClose, onSaved }) {
               onChange={(e) => setForm({ ...form, price: e.target.value })}
             />
           </Field>
-          <Field
-            label={`Provider gets (${currency})`}
-            required
-            error={payTooHigh ? 'Cannot exceed the customer price' : undefined}
-          >
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={form.pay}
-              onChange={(e) => setForm({ ...form, pay: e.target.value })}
-              error={payTooHigh}
-            />
+          <Field label="Inspector payout" required>
+            <Select
+              value={form.payoutMode}
+              onChange={(e) => setForm({ ...form, payoutMode: e.target.value })}
+            >
+              <option value="PERCENT">Share of the price (%)</option>
+              <option value="FIXED">Flat amount per job</option>
+            </Select>
           </Field>
+          {form.payoutMode === 'PERCENT' ? (
+            <Field
+              label="Inspector share (%)"
+              hint="Leave blank to use the global split."
+            >
+              <Input
+                type="number"
+                step="0.25"
+                min="0"
+                max="100"
+                value={form.payoutPercent}
+                onChange={(e) => setForm({ ...form, payoutPercent: e.target.value })}
+                placeholder="global default"
+              />
+            </Field>
+          ) : (
+            <Field
+              label={`Flat payout (${currency})`}
+              required
+              error={
+                payTooHigh
+                  ? 'Cannot exceed the base price'
+                  : fixedMissing
+                    ? 'A flat payout needs an amount'
+                    : undefined
+              }
+            >
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={form.pay}
+                onChange={(e) => setForm({ ...form, pay: e.target.value })}
+                error={payTooHigh || fixedMissing}
+              />
+            </Field>
+          )}
+
           <Field label="Minutes on site" required>
             <Input
               type="number"
@@ -551,10 +770,16 @@ function ServiceForm({ service, categories, currency, onClose, onSaved }) {
           </Field>
         </div>
 
-        {priceCents > 0 && payCents >= 0 && !payTooHigh && (
+        {priceCents > 0 && isFixed && payCents != null && !payTooHigh && (
           <p className="ref text-[12px] text-[var(--color-ink-3)]">
-            MARGIN {moneyExact(priceCents - payCents, currency)} (
+            ON THE BASE PRICE: YOUR SHARE {moneyExact(priceCents - payCents, currency)} (
             {Math.round(((priceCents - payCents) / priceCents) * 100)}%)
+          </p>
+        )}
+        {!isFixed && (
+          <p className="text-[12.5px] text-[var(--color-ink-3)]">
+            A percentage applies to the <strong>final</strong> price, so square-footage tiers and
+            add-ons are shared with the inspector automatically.
           </p>
         )}
 
@@ -574,6 +799,22 @@ function ServiceForm({ service, categories, currency, onClose, onSaved }) {
               onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
             />
             Bookable by customers
+          </label>
+          <label className="flex items-center gap-2.5 text-[14px] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.collectsSquareFeet}
+              onChange={(e) => setForm({ ...form, collectsSquareFeet: e.target.checked })}
+            />
+            Ask for square footage
+          </label>
+          <label className="flex items-center gap-2.5 text-[14px] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.collectsYearBuilt}
+              onChange={(e) => setForm({ ...form, collectsYearBuilt: e.target.checked })}
+            />
+            Ask for year built
           </label>
         </div>
 

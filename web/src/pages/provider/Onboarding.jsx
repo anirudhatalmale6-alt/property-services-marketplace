@@ -13,13 +13,14 @@ import {
   Field,
   Input,
   Loading,
+  Select,
   Spinner,
   Textarea,
 } from '../../components/ui.jsx';
 
 const REQUIRED_DOCS = [
-  ['IDENTITY', 'Photo ID', 'Driver licence or passport.'],
-  ['LICENCE', 'Trade licence', 'Your QBCC / trade licence or equivalent registration.'],
+  ['IDENTITY', 'Photo ID', 'Driver license or passport.'],
+  ['LICENSE', 'Trade license', 'Your QBCC / trade license or equivalent registration.'],
   ['INSURANCE', 'Public liability insurance', 'Certificate of currency showing the expiry date.'],
 ];
 
@@ -34,7 +35,8 @@ export default function Onboarding() {
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const [profile, setProfile] = useState({ businessName: '', abnOrLicenceNo: '', bio: '' });
+  const [profile, setProfile] = useState({ businessName: '', legalName: '', bio: '' });
+  const [credentials, setCredentials] = useState([]);
   const [serviceIds, setServiceIds] = useState([]);
   const [areaIds, setAreaIds] = useState([]);
   const [uploadingKind, setUploadingKind] = useState(null);
@@ -49,11 +51,22 @@ export default function Onboarding() {
         setAreas(ar.areas);
         setProfile({
           businessName: me.profile.businessName || '',
-          abnOrLicenceNo: me.profile.abnOrLicenceNo || '',
+          legalName: me.profile.legalName || '',
           bio: me.profile.bio || '',
         });
         setServiceIds(me.profile.services.map((s) => s.id));
         setAreaIds(me.profile.areas.map((a) => a.id));
+        setCredentials(
+          (me.profile.credentials ?? []).map((c) => ({
+            id: c.id,
+            kind: c.kind,
+            jurisdiction: c.jurisdiction ?? '',
+            number: c.number,
+            issuedBy: c.issuedBy ?? '',
+            expiresAt: c.expiresAt ? c.expiresAt.slice(0, 10) : '',
+            reviewState: c.reviewState,
+          })),
+        );
       })
       .catch(setError);
   }, []);
@@ -69,6 +82,29 @@ export default function Onboarding() {
     try {
       await api.provider.updateMe(profile);
       setNotice('Details saved.');
+      load();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveCredentials = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.provider.setCredentials(
+        credentials.map((c) => ({
+          ...(c.id ? { id: c.id } : {}),
+          kind: c.kind,
+          ...(c.jurisdiction ? { jurisdiction: c.jurisdiction.toUpperCase() } : {}),
+          number: c.number.trim(),
+          ...(c.issuedBy.trim() ? { issuedBy: c.issuedBy.trim() } : {}),
+          ...(c.expiresAt ? { expiresAt: new Date(`${c.expiresAt}T12:00:00Z`).toISOString() } : {}),
+        })),
+      );
+      setNotice('Credentials saved.');
       load();
     } catch (e) {
       setError(e);
@@ -211,10 +247,10 @@ export default function Onboarding() {
                 disabled={locked}
               />
             </Field>
-            <Field label="ABN or licence number" hint="Shown to our team during verification.">
+            <Field label="ABN or license number" hint="Shown to our team during verification.">
               <Input
-                value={profile.abnOrLicenceNo}
-                onChange={(e) => setProfile({ ...profile, abnOrLicenceNo: e.target.value })}
+                value={profile.legalName}
+                onChange={(e) => setProfile({ ...profile, legalName: e.target.value })}
                 disabled={locked}
               />
             </Field>
@@ -294,7 +330,7 @@ export default function Onboarding() {
                     {on ? '☑' : '☐'} {a.name}
                   </p>
                   <p className="ref text-[11.5px] text-[var(--color-ink-3)]">
-                    {a.postcode} · {a.city}, {a.region}
+                    {a.zip} · {a.city}, {a.state}
                   </p>
                 </button>
               );
@@ -313,6 +349,184 @@ export default function Onboarding() {
           )}
         </Card>
 
+        {/* --------------------------------------- 3. licenses per state */}
+        <Card className="p-4 sm:p-5">
+          <div className="flex items-center gap-2.5 mb-1.5">
+            <span
+              className={`step-dot ${
+                (onboarding.statesMissingLicense ?? []).length === 0 && credentials.length > 0
+                  ? 'step-dot-done'
+                  : 'step-dot-active'
+              }`}
+            >
+              3
+            </span>
+            <h2 className="text-lg">Licenses &amp; insurance</h2>
+          </div>
+          <p className="text-[13.5px] text-[var(--color-ink-3)] mb-4 ml-9">
+            One license per state you work in. Requirements differ state to state, so add each one
+            separately.
+          </p>
+
+          {(onboarding.statesMissingLicense ?? []).length > 0 && (
+            <Alert tone="hold" className="mb-4" title="A state is missing its license">
+              You&apos;ve chosen to work in{' '}
+              <strong>{onboarding.statesMissingLicense.join(', ')}</strong> but haven&apos;t added a
+              license for {onboarding.statesMissingLicense.length === 1 ? 'it' : 'them'} yet.
+            </Alert>
+          )}
+
+          <div className="space-y-3">
+            {credentials.map((c, i) => (
+              <div
+                key={c.id ?? `new-${i}`}
+                className="p-3.5"
+                style={{
+                  border: '1px solid var(--color-rule)',
+                  borderLeft: `3px solid ${
+                    c.reviewState === 'APPROVED'
+                      ? 'var(--color-go)'
+                      : c.reviewState === 'REJECTED'
+                        ? 'var(--color-stop)'
+                        : 'var(--color-rule-strong)'
+                  }`,
+                }}
+              >
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-2">
+                    {c.reviewState && (
+                      <Badge
+                        tone={
+                          c.reviewState === 'APPROVED'
+                            ? 'badge-go'
+                            : c.reviewState === 'REJECTED'
+                              ? 'badge-stop'
+                              : 'badge-hold'
+                        }
+                      >
+                        {titleCase(c.reviewState)}
+                      </Badge>
+                    )}
+                  </div>
+                  {!locked && (
+                    <Button
+                      variant="quiet"
+                      size="sm"
+                      onClick={() => setCredentials((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-3.5">
+                  <Field label="Type" required>
+                    <Select
+                      value={c.kind}
+                      disabled={locked}
+                      onChange={(e) =>
+                        setCredentials((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, kind: e.target.value } : x)),
+                        )
+                      }
+                    >
+                      <option value="LICENSE">State license</option>
+                      <option value="CERTIFICATION">Certification</option>
+                      <option value="INSURANCE">Insurance</option>
+                      <option value="BOND">Bond</option>
+                      <option value="OTHER">Other</option>
+                    </Select>
+                  </Field>
+
+                  <Field
+                    label="State"
+                    required={c.kind === 'LICENSE'}
+                    hint={c.kind === 'LICENSE' ? undefined : 'Leave blank if not state-specific.'}
+                  >
+                    <Input
+                      value={c.jurisdiction}
+                      disabled={locked}
+                      maxLength={2}
+                      placeholder="TX"
+                      onChange={(e) =>
+                        setCredentials((prev) =>
+                          prev.map((x, j) =>
+                            j === i ? { ...x, jurisdiction: e.target.value.toUpperCase() } : x,
+                          ),
+                        )
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Number" required>
+                    <Input
+                      value={c.number}
+                      disabled={locked}
+                      onChange={(e) =>
+                        setCredentials((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, number: e.target.value } : x)),
+                        )
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Expires">
+                    <Input
+                      type="date"
+                      value={c.expiresAt}
+                      disabled={locked}
+                      onChange={(e) =>
+                        setCredentials((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, expiresAt: e.target.value } : x)),
+                        )
+                      }
+                    />
+                  </Field>
+
+                  <Field label="Issuing authority" className="sm:col-span-2">
+                    <Input
+                      value={c.issuedBy}
+                      disabled={locked}
+                      placeholder="e.g. Texas Real Estate Commission"
+                      onChange={(e) =>
+                        setCredentials((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, issuedBy: e.target.value } : x)),
+                        )
+                      }
+                    />
+                  </Field>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {!locked && (
+            <div className="flex flex-wrap gap-2 mt-3.5">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setCredentials((prev) => [
+                    ...prev,
+                    { kind: 'LICENSE', jurisdiction: '', number: '', issuedBy: '', expiresAt: '' },
+                  ])
+                }
+              >
+                + Add a license
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={saveCredentials}
+                disabled={busy || credentials.some((c) => !c.number.trim())}
+              >
+                {busy ? <Spinner /> : null}
+                Save credentials
+              </Button>
+            </div>
+          )}
+        </Card>
+
         {/* ------------------------------------------------- 3. documents */}
         <Card className="p-4 sm:p-5">
           <div className="flex items-center gap-2.5 mb-1.5">
@@ -321,7 +535,7 @@ export default function Onboarding() {
             >
               3
             </span>
-            <h2 className="text-lg">Licence, insurance &amp; ID</h2>
+            <h2 className="text-lg">License, insurance &amp; ID</h2>
           </div>
           <p className="text-[13.5px] text-[var(--color-ink-3)] mb-4 ml-9">
             Only our verification team sees these. They are never shown to customers.
@@ -403,7 +617,7 @@ export default function Onboarding() {
           </p>
         </Card>
 
-        {/* ---------------------------------------------------- 4. submit */}
+        {/* ---------------------------------------------------- 5. submit */}
         {!locked && (
           <Card className="p-4 sm:p-5" ticked>
             <Eyebrow className="mb-2.5">Ready?</Eyebrow>
@@ -430,6 +644,9 @@ export default function Onboarding() {
                       • Upload your{' '}
                       {REQUIRED_DOCS.find(([kk]) => kk === k)?.[1].toLowerCase() ?? titleCase(k)}
                     </li>
+                  ))}
+                  {(onboarding.statesMissingLicense ?? []).map((st) => (
+                    <li key={st}>• Add your {st} license</li>
                   ))}
                 </ul>
                 <p className="text-[13px] text-[var(--color-ink-3)] mt-3.5">

@@ -141,7 +141,7 @@ export default function Register() {
 
           {role === 'PROVIDER' && (
             <p className="text-[13px] text-[var(--color-ink-3)]">
-              Next you&apos;ll pick your services and suburbs and upload your licence, insurance and
+              Next you&apos;ll pick your services and ZIP codes and upload your license, insurance and
               ID. Our team verifies these before you can accept work.
             </p>
           )}

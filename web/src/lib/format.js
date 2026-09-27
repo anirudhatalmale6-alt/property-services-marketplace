@@ -1,33 +1,33 @@
 /** Presentation helpers. All money arrives as integer cents. */
 
-export const money = (cents, currency = 'AUD') =>
-  new Intl.NumberFormat('en-AU', {
+export const money = (cents, currency = 'USD') =>
+  new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency,
     minimumFractionDigits: Number.isInteger(cents / 100) ? 0 : 2,
   }).format((cents ?? 0) / 100);
 
-export const moneyExact = (cents, currency = 'AUD') =>
-  new Intl.NumberFormat('en-AU', { style: 'currency', currency }).format((cents ?? 0) / 100);
+export const moneyExact = (cents, currency = 'USD') =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format((cents ?? 0) / 100);
 
 export const dateLong = (d) =>
-  new Intl.DateTimeFormat('en-AU', {
+  new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
   }).format(new Date(d));
 
 export const dateShort = (d) =>
-  new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'short' }).format(new Date(d));
+  new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'short' }).format(new Date(d));
 
 export const dayName = (d) =>
-  new Intl.DateTimeFormat('en-AU', { weekday: 'short' }).format(new Date(d));
+  new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(new Date(d));
 
 export const timeOnly = (d) =>
-  new Intl.DateTimeFormat('en-AU', { hour: 'numeric', minute: '2-digit' }).format(new Date(d));
+  new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date(d));
 
 export const dateTime = (d) =>
-  new Intl.DateTimeFormat('en-AU', {
+  new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
     month: 'short',
     hour: 'numeric',
@@ -35,7 +35,7 @@ export const dateTime = (d) =>
   }).format(new Date(d));
 
 export const dateTimeFull = (d) =>
-  new Intl.DateTimeFormat('en-AU', {
+  new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
@@ -55,7 +55,7 @@ export const duration = (minutes) => {
 export const relative = (d) => {
   const diff = new Date(d).getTime() - Date.now();
   const abs = Math.abs(diff);
-  const rtf = new Intl.RelativeTimeFormat('en-AU', { numeric: 'auto' });
+  const rtf = new Intl.RelativeTimeFormat('en-US', { numeric: 'auto' });
 
   if (abs < 60_000) return 'just now';
   if (abs < 3_600_000) return rtf.format(Math.round(diff / 60_000), 'minute');
@@ -71,7 +71,7 @@ export const bytes = (n) => {
 };
 
 export const addressLine = (a) =>
-  a ? [a.line1, a.line2, a.city, a.region, a.postcode].filter(Boolean).join(', ') : '';
+  a ? [a.line1, a.line2, a.city, a.state, a.zip].filter(Boolean).join(', ') : '';
 
 /** Job status → badge class + label. One mapping, used everywhere. */
 export const STATUS_TONE = {

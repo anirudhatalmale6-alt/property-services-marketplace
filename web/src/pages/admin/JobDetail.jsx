@@ -208,7 +208,7 @@ export default function AdminJobDetail() {
               {job.customer.phone && <Row label="Phone" mono>{job.customer.phone}</Row>}
               <Row label="Address">{addressLine(job.address)}</Row>
               {job.address?.notes && <Row label="Access">{job.address.notes}</Row>}
-              {job.area && <Row label="Market">{`${job.area.name} · ${job.area.region}`}</Row>}
+              {job.area && <Row label="Market">{`${job.area.name} · ${job.area.state}`}</Row>}
               {job.customerNotes && <Row label="Notes">{job.customerNotes}</Row>}
             </div>
           </Card>

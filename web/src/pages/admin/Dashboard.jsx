@@ -148,7 +148,7 @@ export default function AdminDashboard() {
           <div className="p-4 grid gap-2.5">
             {[
               ['/admin/jobs?status=OPEN', 'Unfilled jobs', 'Paid work nobody has accepted yet'],
-              ['/admin/providers?status=PENDING', 'Verify providers', 'Review licences and insurance'],
+              ['/admin/providers?status=PENDING', 'Verify providers', 'Review licenses and insurance'],
               ['/admin/money', 'Release payouts', 'Pay providers for completed jobs'],
               ['/admin/exceptions', 'Exceptions queue', 'Refunds, no-shows, missing reports'],
               ['/admin/areas', 'Coverage & pricing', 'Open a new market or change a price'],

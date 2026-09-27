@@ -40,27 +40,27 @@ function candidateStarts(day, durationMinutes) {
  *
  * @param {object} opts
  * @param {string} opts.serviceId
- * @param {string} [opts.postcode] used to resolve the market
+ * @param {string} [opts.zip] used to resolve the market
  * @param {Date} opts.from
  * @param {number} [opts.days]
  * @returns {Promise<{area:object|null, slots:Array<{start:string,end:string,capacity:number}>}>}
  */
-export async function getAvailability({ serviceId, postcode, from, days = 14 }) {
+export async function getAvailability({ serviceId, zip, from, days = 14 }) {
   const service = await prisma.service.findUnique({
     where: { id: serviceId },
     select: { id: true, durationMinutes: true, isActive: true },
   });
   if (!service || !service.isActive) return { area: null, slots: [] };
 
-  const area = postcode
+  const area = zip
     ? await prisma.serviceArea.findFirst({
-        where: { postcode: String(postcode).trim(), isActive: true },
+        where: { zip: String(zip).trim(), isActive: true },
       })
     : null;
 
   // We only operate where there is a live ServiceArea row. No row, no slots —
   // this is what keeps "are you in my city?" an honest answer.
-  if (postcode && !area) return { area: null, slots: [] };
+  if (zip && !area) return { area: null, slots: [] };
 
   const providers = await prisma.providerProfile.findMany({
     where: {
@@ -130,7 +130,7 @@ export async function getAvailability({ serviceId, postcode, from, days = 14 }) 
  *
  * @returns {{ok:true, start:Date, end:Date}|{ok:false, reason:string}}
  */
-export async function validateSlot({ serviceId, postcode, start }) {
+export async function validateSlot({ serviceId, zip, start }) {
   const service = await prisma.service.findUnique({
     where: { id: serviceId },
     select: { durationMinutes: true, isActive: true },
@@ -171,7 +171,7 @@ export async function validateSlot({ serviceId, postcode, start }) {
   // loaded.
   const { slots } = await getAvailability({
     serviceId,
-    postcode,
+    zip,
     from: s,
     days: 1,
   });

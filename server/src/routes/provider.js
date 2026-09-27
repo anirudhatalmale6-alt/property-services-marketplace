@@ -30,7 +30,8 @@ const myProfile = async (userId) => {
     where: { userId },
     include: {
       services: { include: { service: { select: { id: true, name: true, slug: true } } } },
-      areas: { include: { area: { select: { id: true, name: true, city: true, region: true, postcode: true } } } },
+      areas: { include: { area: { select: { id: true, name: true, city: true, state: true, zip: true } } } },
+      credentials: { orderBy: [{ kind: 'asc' }, { jurisdiction: 'asc' }] },
       documents: {
         select: {
           id: true,
@@ -62,14 +63,25 @@ providerRouter.get(
     const have = new Set(
       profile.documents.filter((d) => d.reviewState !== 'REJECTED').map((d) => d.kind),
     );
-    const missing = ['IDENTITY', 'LICENCE', 'INSURANCE'].filter((k) => !have.has(k));
+    const missing = ['IDENTITY', 'LICENSE', 'INSURANCE'].filter((k) => !have.has(k));
+
+    // SOP §13: eligibility is per jurisdiction. Serving a state you hold no
+    // licence for is the gap that matters, so name it explicitly.
+    const licensedStates = new Set(
+      profile.credentials
+        .filter((c) => c.kind === 'LICENSE' && c.reviewState !== 'REJECTED' && c.jurisdiction)
+        .map((c) => c.jurisdiction),
+    );
+    const servedStates = [...new Set(profile.areas.map((a) => a.area.state))];
+    const statesMissingLicense = servedStates.filter((st) => !licensedStates.has(st));
 
     res.json({
       profile: {
         id: profile.id,
         businessName: profile.businessName,
-        abnOrLicenceNo: profile.abnOrLicenceNo,
+        legalName: profile.legalName,
         bio: profile.bio,
+        credentials: profile.credentials,
         status: profile.status,
         submittedAt: profile.submittedAt,
         reviewedAt: profile.reviewedAt,
@@ -82,8 +94,13 @@ providerRouter.get(
         missingDocuments: missing,
         hasServices: profile.services.length > 0,
         hasAreas: profile.areas.length > 0,
+        statesServed: servedStates,
+        statesMissingLicense,
         canSubmit:
-          missing.length === 0 && profile.services.length > 0 && profile.areas.length > 0,
+          missing.length === 0 &&
+          profile.services.length > 0 &&
+          profile.areas.length > 0 &&
+          statesMissingLicense.length === 0,
       },
     });
   }),
@@ -95,7 +112,7 @@ providerRouter.patch(
     const body = parse(
       z.object({
         businessName: z.string().trim().min(2).max(160).optional(),
-        abnOrLicenceNo: z.string().trim().max(60).optional(),
+        legalName: z.string().trim().max(160).optional(),
         bio: z.string().trim().max(1000).optional(),
       }),
       req.body,
@@ -154,7 +171,7 @@ providerRouter.post(
   asyncHandler(async (req, res) => {
     const { kind, expiresAt } = parse(
       z.object({
-        kind: z.enum(['IDENTITY', 'LICENCE', 'INSURANCE', 'OTHER']),
+        kind: z.enum(['IDENTITY', 'LICENSE', 'INSURANCE', 'OTHER']),
         expiresAt: z.string().datetime().optional(),
       }),
       req.body,
@@ -189,6 +206,100 @@ providerRouter.post(
   }),
 );
 
+/**
+ * Add or replace a credential (SOP §4). Jurisdiction is stored separately from
+ * the credential itself, and an inspector may hold as many as they need — one
+ * per state they serve, plus insurance and any certifications.
+ */
+providerRouter.put(
+  '/me/credentials',
+  asyncHandler(async (req, res) => {
+    const { credentials } = parse(
+      z.object({
+        credentials: z
+          .array(
+            z.object({
+              id: z.string().uuid().optional(),
+              kind: z.enum(['LICENSE', 'CERTIFICATION', 'INSURANCE', 'BOND', 'OTHER']),
+              jurisdiction: z
+                .string()
+                .trim()
+                .length(2, 'Use the two-letter state code')
+                .toUpperCase()
+                .optional()
+                .or(z.literal('').transform(() => undefined)),
+              number: z.string().trim().min(2, 'Credential number is required').max(80),
+              issuedBy: z.string().trim().max(160).optional(),
+              expiresAt: z.string().datetime().optional(),
+              documentId: z.string().uuid().optional(),
+            }),
+          )
+          .max(40),
+      }),
+      req.body,
+    );
+
+    const profile = await prisma.providerProfile.findUnique({ where: { userId: req.user.id } });
+    if (!profile) throw notFound('Provider profile not found');
+
+    // A state licence without its state cannot be checked against a job's
+    // jurisdiction, so it is not a licence as far as eligibility is concerned.
+    for (const c of credentials) {
+      if (c.kind === 'LICENSE' && !c.jurisdiction) {
+        throw badRequest(`Which state is license ${c.number} issued in?`, [
+          { field: 'jurisdiction', message: 'Required for a state license' },
+        ]);
+      }
+    }
+
+    // Any document referenced must belong to this provider.
+    const docIds = credentials.map((c) => c.documentId).filter(Boolean);
+    if (docIds.length) {
+      const owned = await prisma.document.count({
+        where: { id: { in: docIds }, providerId: profile.id },
+      });
+      if (owned !== new Set(docIds).size) throw forbidden('That document is not yours');
+    }
+
+    const saved = await prisma.$transaction(async (tx) => {
+      const keep = [];
+      for (const c of credentials) {
+        const data = {
+          kind: c.kind,
+          jurisdiction: c.jurisdiction ?? null,
+          number: c.number,
+          issuedBy: c.issuedBy ?? null,
+          expiresAt: c.expiresAt ? new Date(c.expiresAt) : null,
+          documentId: c.documentId ?? null,
+          // Editing a credential sends it back for review — an inspector must
+          // not be able to swap an approved licence number for another.
+          reviewState: 'PENDING',
+          reviewNotes: null,
+        };
+
+        if (c.id) {
+          const existing = await tx.inspectorCredential.findUnique({ where: { id: c.id } });
+          if (!existing || existing.providerId !== profile.id) {
+            throw forbidden('That credential is not yours');
+          }
+          keep.push(await tx.inspectorCredential.update({ where: { id: c.id }, data }));
+        } else {
+          keep.push(await tx.inspectorCredential.create({ data: { ...data, providerId: profile.id } }));
+        }
+      }
+
+      // Anything the inspector removed from the form is deleted.
+      await tx.inspectorCredential.deleteMany({
+        where: { providerId: profile.id, id: { notIn: keep.map((k) => k.id) } },
+      });
+
+      return keep;
+    });
+
+    res.json({ credentials: saved });
+  }),
+);
+
 /** Submit for admin review. Refuses until the file set is actually complete. */
 providerRouter.post(
   '/me/submit',
@@ -207,12 +318,24 @@ providerRouter.post(
     const have = new Set(
       profile.documents.filter((d) => d.reviewState !== 'REJECTED').map((d) => d.kind),
     );
-    const missing = ['IDENTITY', 'LICENCE', 'INSURANCE'].filter((k) => !have.has(k));
+    const missing = ['IDENTITY', 'LICENSE', 'INSURANCE'].filter((k) => !have.has(k));
+
+    const licensedStates = new Set(
+      profile.credentials
+        .filter((c) => c.kind === 'LICENSE' && c.reviewState !== 'REJECTED' && c.jurisdiction)
+        .map((c) => c.jurisdiction),
+    );
+    const statesMissingLicense = [...new Set(profile.areas.map((a) => a.area.state))].filter(
+      (st) => !licensedStates.has(st),
+    );
 
     const problems = [];
     if (missing.length) problems.push(`missing documents: ${missing.join(', ').toLowerCase()}`);
     if (profile.services.length === 0) problems.push('no services selected');
     if (profile.areas.length === 0) problems.push('no service areas selected');
+    if (statesMissingLicense.length) {
+      problems.push(`no license on file for ${statesMissingLicense.join(', ')}`);
+    }
     if (problems.length) throw badRequest(`Not quite ready to submit — ${problems.join('; ')}`);
 
     const updated = await prisma.providerProfile.update({
@@ -272,10 +395,10 @@ providerRouter.get(
         providerPayCents: true,
         customerNotes: true,
         service: { select: { id: true, name: true, durationMinutes: true, requiresReport: true } },
-        area: { select: { id: true, name: true, city: true, region: true } },
+        area: { select: { id: true, name: true, city: true, state: true } },
         // Street address is withheld until the job is accepted — the suburb is
         // enough to decide, and it protects the customer's address.
-        address: { select: { city: true, postcode: true } },
+        address: { select: { city: true, zip: true } },
       },
     });
 
@@ -339,7 +462,7 @@ providerRouter.get(
         scheduledEnd: true,
         providerPayCents: true,
         service: { select: { name: true, requiresReport: true } },
-        address: { select: { line1: true, line2: true, city: true, region: true, postcode: true, notes: true } },
+        address: { select: { line1: true, line2: true, city: true, state: true, zip: true, notes: true } },
         customer: { select: { fullName: true, phone: true } },
         payout: { select: { status: true, amountCents: true, paidAt: true } },
       },

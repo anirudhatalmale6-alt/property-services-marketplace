@@ -63,7 +63,7 @@ async function setup() {
 
     const user = await prisma.user.upsert({
       where: { email },
-      create: { email, fullName: `Race Tester ${i}`, phone: `+6149000${String(i).padStart(4, '0')}`, role: 'PROVIDER', passwordHash },
+      create: { email, fullName: `Race Tester ${i}`, phone: `+1214555${String(i).padStart(4, '0')}`, role: 'PROVIDER', passwordHash },
       update: { passwordHash, isActive: true },
     });
 
@@ -101,8 +101,8 @@ async function setup() {
         userId: customer.id,
         line1: '1 Race Street',
         city: area.city,
-        region: area.region,
-        postcode: area.postcode,
+        state: area.state,
+        zip: area.zip,
       },
     }));
 
@@ -126,7 +126,9 @@ async function makeOpenJob({ service, area, customer, address }, round) {
       scheduledStart: start,
       scheduledEnd: new Date(start.getTime() + service.durationMinutes * 60_000),
       priceCents: service.basePriceCents,
-      providerPayCents: service.providerPayCents,
+      // The race test is about assignment, not pricing — a flat payout keeps
+      // it independent of whatever split is configured.
+      providerPayCents: Math.round(service.basePriceCents * 0.8),
       events: { create: { toStatus: 'OPEN', note: 'Race fixture' } },
     },
   });

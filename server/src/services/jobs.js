@@ -119,7 +119,7 @@ export async function raiseException({ jobId, kind, detail, tx }) {
 export const jobInclude = {
   service: { select: { id: true, name: true, slug: true, durationMinutes: true, requiresReport: true } },
   address: true,
-  area: { select: { id: true, name: true, city: true, region: true, postcode: true } },
+  area: { select: { id: true, name: true, city: true, state: true, zip: true } },
   payment: { select: { id: true, status: true, amountCents: true, currency: true, paidAt: true, refundedCents: true } },
   payout: { select: { id: true, status: true, amountCents: true, paidAt: true } },
   documents: {

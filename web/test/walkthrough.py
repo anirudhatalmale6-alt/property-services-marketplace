@@ -118,19 +118,19 @@ def run(p):
     page.goto(BASE)
     settle(page)
     check(has_text(page, "Book a licensed provider"), "home page renders the hero")
-    check(has_text(page, "Pre-Purchase Building Inspection"), "services load from the API")
+    check(has_text(page, "Full Home Inspection"), "services load from the API")
     check(not has_text(page, "That didn't load", 1200, quiet=True), "no load error on the home page")
     shot(page, "01-home-desktop")
 
     # Postcode coverage check, on the hero.
-    page.fill('input[aria-label="Postcode"]', "4051")
+    page.fill('input[aria-label="ZIP code"]', "75201")
     page.click('button:has-text("Check")')
     check(has_text(page, "Covered"), "covered postcode reports coverage")
     shot(page, "02-home-coverage-covered")
 
-    page.fill('input[aria-label="Postcode"]', "9999")
+    page.fill('input[aria-label="ZIP code"]', "99999")
     page.click('button:has-text("Check")')
-    check(has_text(page, "not in 9999"), "uncovered postcode says so plainly")
+    check(has_text(page, "not in 99999"), "uncovered ZIP says so plainly")
 
     ctx.close()
 
@@ -159,19 +159,34 @@ def run(p):
     check(has_text(page, "What do you need done?"), "booking step 1 renders")
     shot(page, "05-book-step1-service")
 
-    page.click('button:has-text("Smoke Alarm Compliance Check")')
+    page.click('button:has-text("Four-Point Inspection")')
     settle(page)
     check(has_text(page, "Which property?"), "advances to the property step")
 
     page.fill('input[autocomplete="address-line1"]', "12 Walkthrough Street")
-    page.fill('input[autocomplete="address-level2"]', "Brisbane")
-    page.fill('input[autocomplete="address-level1"]', "QLD")
-    page.fill('input[autocomplete="postal-code"]', "4103")
+    page.fill('input[autocomplete="address-level2"]', "Dallas")
+    page.fill('input[autocomplete="address-level1"]', "TX")
+    page.fill('input[autocomplete="postal-code"]', "75024")
     # Coverage is checked on a debounce.
     page.wait_for_timeout(900)
     settle(page)
     check(has_text(page, "we cover"), "live coverage confirmation appears")
+
+    # Property details drive the price (SOP 3.3 / 3.6). A Four-Point asks for
+    # the year built; a 1968 home is over 50, so the surcharge must fire and
+    # the total must move from $175 to $210 without leaving the page.
+    check(has_text(page, "About the property"), "service asks for the property details it needs")
+    page.fill('input[type="number"][max="%d"]' % __import__("datetime").date.today().year, "1968")
+    page.wait_for_timeout(900)
+    settle(page)
+    check(has_text(page, "Your price"), "live itemised price appears")
+    check(has_text(page, "over 50 years"), "the age surcharge rule fires and is named")
+    check(has_text(page, "$210"), "the total reflects the rule, not just the base price")
     shot(page, "06-book-step2-property")
+    # The itemised price sits below the fold on desktop — capture it directly.
+    page.locator("text=Your price >> visible=true").first.scroll_into_view_if_needed()
+    page.wait_for_timeout(300)
+    shot(page, "06b-book-live-price")
 
     page.click('button:has-text("Choose a time")')
     settle(page)
@@ -328,15 +343,24 @@ def run(p):
     page.goto(f"{BASE}/admin/areas")
     settle(page)
     check(has_text(page, "Service areas"), "coverage page renders")
-    check(has_text(page, "QLD"), "markets grouped by state")
+    check(has_text(page, "TX"), "markets grouped by state")
     shot(page, "25-admin-coverage")
 
     page.goto(f"{BASE}/admin/areas")
     settle(page)
     page.click('button:has-text("Services & pricing")')
     settle(page)
-    check(has_text(page, "Customer pays"), "pricing table renders")
+    check(has_text(page, "Inspector payout"), "pricing table renders")
+    check(has_text(page, "size tiers"), "square-footage tiers are shown per service")
     shot(page, "26-admin-pricing")
+
+    # SOP 10: the platform fee must be configuration, not code.
+    page.click('button:has-text("Platform fee")')
+    settle(page)
+    check(has_text(page, "Default inspector share"), "platform fee screen renders")
+    check(has_text(page, "Inspector keeps"), "the split is an editable setting")
+    check(has_text(page, "Your gross share"), "the worked example shows the platform share")
+    shot(page, "27-admin-platform-fee")
     ctx.close()
 
     # ------------------------------------------------ access control

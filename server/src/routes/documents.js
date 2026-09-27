@@ -1,7 +1,7 @@
 /**
  * Authenticated document download.
  *
- * Documents are NEVER served as static files. A provider's licence and a job
+ * Documents are NEVER served as static files. A provider's license and a job
  * report are private; this route checks entitlement per request and streams the
  * bytes from whichever storage driver is configured.
  */

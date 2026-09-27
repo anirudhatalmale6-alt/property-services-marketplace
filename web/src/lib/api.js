@@ -112,9 +112,10 @@ export const api = {
   catalog: {
     services: () => get('/api/catalog/services'),
     service: (slug) => get(`/api/catalog/services/${slug}`),
-    coverage: (postcode) => get(`/api/catalog/coverage${qs({ postcode })}`),
+    coverage: (zip) => get(`/api/catalog/coverage${qs({ zip })}`),
     areas: () => get('/api/catalog/areas'),
     availability: (params) => get(`/api/catalog/availability${qs(params)}`),
+    quote: (payload) => post('/api/catalog/quote', payload),
   },
 
   bookings: {
@@ -132,6 +133,7 @@ export const api = {
     me: () => get('/api/provider/me'),
     updateMe: (payload) => patch('/api/provider/me', payload),
     setCoverage: (serviceIds, areaIds) => put('/api/provider/me/coverage', { serviceIds, areaIds }),
+    setCredentials: (credentials) => put('/api/provider/me/credentials', { credentials }),
     uploadDoc: (formData) => upload('/api/provider/me/documents', formData),
     submit: () => post('/api/provider/me/submit'),
     available: () => get('/api/provider/jobs/available'),
@@ -172,6 +174,14 @@ export const api = {
     createService: (payload) => post('/api/admin/services', payload),
     updateService: (id, payload) => patch(`/api/admin/services/${id}`, payload),
     areas: () => get('/api/admin/areas'),
+    payoutSettings: () => get('/api/admin/settings/payout'),
+    setPayoutSettings: (inspectorPercent) => put('/api/admin/settings/payout', { inspectorPercent }),
+    addPriceRule: (serviceId, rule) => post(`/api/admin/services/${serviceId}/price-rules`, rule),
+    updatePriceRule: (id, rule) => patch(`/api/admin/price-rules/${id}`, rule),
+    retirePriceRule: (id) => request(`/api/admin/price-rules/${id}`, { method: 'DELETE' }),
+    expiringCredentials: (days) => get(`/api/admin/credentials/expiring${qs({ days })}`),
+    reviewCredential: (id, decision, notes) =>
+      post(`/api/admin/credentials/${id}/review`, { decision, notes }),
     createArea: (payload) => post('/api/admin/areas', payload),
     updateArea: (id, payload) => patch(`/api/admin/areas/${id}`, payload),
   },

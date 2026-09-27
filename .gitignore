@@ -10,3 +10,8 @@ uploads/
 *.log
 .DS_Store
 coverage/
+
+# Client-supplied documents. These are the client's confidential business
+# material and this repository is public — they must never be committed.
+*.pdf
+sop.txt

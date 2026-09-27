@@ -12,6 +12,7 @@ import { STATUS_LABELS, jobInclude, transitionJob } from '../services/jobs.js';
 import { assignJobToProvider, releaseJob } from '../services/assignment.js';
 import { refundPayment, sendPayout } from '../services/payments.js';
 import { notifyUser } from '../services/notify.js';
+import { getDefaultPayoutBp, setDefaultPayoutBp } from '../services/pricing.js';
 import { emitJobUpdated, emitProviderUpdated } from '../realtime.js';
 
 export const adminRouter = express.Router();
@@ -166,7 +167,7 @@ adminRouter.get(
       include: {
         user: { select: { id: true, fullName: true, email: true, phone: true, isActive: true, createdAt: true } },
         services: { include: { service: { select: { id: true, name: true } } } },
-        areas: { include: { area: { select: { id: true, name: true, city: true, region: true } } } },
+        areas: { include: { area: { select: { id: true, name: true, city: true, state: true } } } },
         documents: { orderBy: { createdAt: 'desc' } },
         jobs: {
           orderBy: { scheduledStart: 'desc' },
@@ -219,7 +220,7 @@ adminRouter.post(
         );
       }
       const kinds = new Set(provider.documents.map((d) => d.kind));
-      const missing = ['IDENTITY', 'LICENCE', 'INSURANCE'].filter((k) => !kinds.has(k));
+      const missing = ['IDENTITY', 'LICENSE', 'INSURANCE'].filter((k) => !kinds.has(k));
       if (missing.length) {
         throw badRequest(`Cannot approve — still missing: ${missing.join(', ').toLowerCase()}`);
       }
@@ -362,7 +363,7 @@ adminRouter.get(
               { reference: { contains: q.toUpperCase() } },
               { customer: { fullName: { contains: q, mode: 'insensitive' } } },
               { customer: { email: { contains: q, mode: 'insensitive' } } },
-              { address: { postcode: { contains: q } } },
+              { address: { zip: { contains: q } } },
             ],
           }
         : {}),
@@ -385,7 +386,7 @@ adminRouter.get(
           service: { select: { name: true } },
           customer: { select: { id: true, fullName: true, email: true } },
           provider: { select: { id: true, businessName: true } },
-          address: { select: { city: true, region: true, postcode: true } },
+          address: { select: { city: true, state: true, zip: true } },
           payment: { select: { status: true, amountCents: true } },
           payout: { select: { status: true, amountCents: true } },
           _count: { select: { exceptions: true } },
@@ -768,10 +769,19 @@ adminRouter.get(
   asyncHandler(async (req, res) => {
     const services = await prisma.service.findMany({
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-      include: { category: { select: { id: true, name: true } }, _count: { select: { jobs: true, providers: true } } },
+      include: {
+        category: { select: { id: true, name: true } },
+        priceRules: { orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }] },
+        _count: { select: { jobs: true, providers: true } },
+      },
     });
     const categories = await prisma.serviceCategory.findMany({ orderBy: { sortOrder: 'asc' } });
-    res.json({ currency: env.currency, services, categories });
+    res.json({
+      currency: env.currency,
+      services,
+      categories,
+      defaultPayoutPercentBp: await getDefaultPayoutBp(),
+    });
   }),
 );
 
@@ -787,20 +797,39 @@ const serviceWriteSchema = z.object({
   shortDescription: z.string().trim().min(2).max(300),
   description: z.string().trim().min(2).max(4000),
   basePriceCents: z.number().int().min(0),
-  providerPayCents: z.number().int().min(0),
+  // SOP §10: the split is configuration, not code.
+  payoutMode: z.enum(['PERCENT', 'FIXED']).default('PERCENT'),
+  payoutPercentBp: z.number().int().min(0).max(10_000).nullable().optional(),
+  providerPayCents: z.number().int().min(0).nullable().optional(),
   durationMinutes: z.number().int().min(15).max(600),
   requiresReport: z.boolean().default(true),
   isActive: z.boolean().default(true),
   sortOrder: z.number().int().default(0),
+  collectsSquareFeet: z.boolean().default(false),
+  collectsYearBuilt: z.boolean().default(false),
 });
+
+/**
+ * A service must be able to produce a payout. FIXED with no amount, or PERCENT
+ * with a fixed amount and no percent, silently pays an inspector nothing.
+ */
+function assertPayoutCoherent({ payoutMode, payoutPercentBp, providerPayCents, basePriceCents }) {
+  if (payoutMode === 'FIXED') {
+    if (providerPayCents == null) {
+      throw badRequest('A fixed payout needs an amount');
+    }
+    if (basePriceCents != null && providerPayCents > basePriceCents) {
+      throw badRequest('The fixed payout cannot exceed the base price');
+    }
+  }
+  // PERCENT with a null percent is legal — it inherits the global default.
+}
 
 adminRouter.post(
   '/services',
   asyncHandler(async (req, res) => {
     const body = parse(serviceWriteSchema, req.body);
-    if (body.providerPayCents > body.basePriceCents) {
-      throw badRequest('The provider payment cannot exceed the customer price');
-    }
+    assertPayoutCoherent(body);
     const service = await prisma.service.create({ data: body });
     res.status(201).json({ service });
   }),
@@ -814,9 +843,12 @@ adminRouter.patch(
     const current = await prisma.service.findUnique({ where: { id: req.params.id } });
     if (!current) throw notFound('Service not found');
 
-    const price = body.basePriceCents ?? current.basePriceCents;
-    const pay = body.providerPayCents ?? current.providerPayCents;
-    if (pay > price) throw badRequest('The provider payment cannot exceed the customer price');
+    assertPayoutCoherent({
+      payoutMode: body.payoutMode ?? current.payoutMode,
+      payoutPercentBp: body.payoutPercentBp ?? current.payoutPercentBp,
+      providerPayCents: body.providerPayCents ?? current.providerPayCents,
+      basePriceCents: body.basePriceCents ?? current.basePriceCents,
+    });
 
     const service = await prisma.service.update({ where: { id: req.params.id }, data: body });
     res.json({ service });
@@ -831,7 +863,7 @@ adminRouter.get(
   '/areas',
   asyncHandler(async (req, res) => {
     const areas = await prisma.serviceArea.findMany({
-      orderBy: [{ region: 'asc' }, { city: 'asc' }],
+      orderBy: [{ state: 'asc' }, { city: 'asc' }],
       include: { _count: { select: { providers: true, jobs: true } } },
     });
     res.json({ areas });
@@ -844,9 +876,9 @@ adminRouter.post(
     const body = parse(
       z.object({
         name: z.string().trim().min(2).max(120),
-        postcode: z.string().trim().min(3).max(12),
+        zip: z.string().trim().min(3).max(12),
         city: z.string().trim().min(2).max(120),
-        region: z.string().trim().min(2).max(120),
+        state: z.string().trim().min(2).max(120),
         country: z.string().trim().length(2).default('AU'),
         isActive: z.boolean().default(true),
       }),
@@ -854,9 +886,9 @@ adminRouter.post(
     );
 
     const clash = await prisma.serviceArea.findFirst({
-      where: { postcode: body.postcode, country: body.country },
+      where: { zip: body.zip, country: body.country },
     });
-    if (clash) throw conflict(`Postcode ${body.postcode} is already a service area`, 'AREA_EXISTS');
+    if (clash) throw conflict(`Zip ${body.zip} is already a service area`, 'AREA_EXISTS');
 
     const area = await prisma.serviceArea.create({ data: body });
     res.status(201).json({ area });
@@ -870,12 +902,189 @@ adminRouter.patch(
       z.object({
         name: z.string().trim().min(2).max(120).optional(),
         city: z.string().trim().min(2).max(120).optional(),
-        region: z.string().trim().min(2).max(120).optional(),
+        state: z.string().trim().min(2).max(120).optional(),
         isActive: z.boolean().optional(),
       }),
       req.body,
     );
     const area = await prisma.serviceArea.update({ where: { id: req.params.id }, data: body });
     res.json({ area });
+  }),
+);
+
+// ------------------------------------------------- platform fee settings
+
+/**
+ * The global inspector/platform split (SOP §10). One number, changeable by the
+ * business without a developer. Individual services may override it.
+ */
+adminRouter.get(
+  '/settings/payout',
+  asyncHandler(async (req, res) => {
+    const bp = await getDefaultPayoutBp();
+    res.json({
+      defaultPayoutPercentBp: bp,
+      inspectorPercent: bp / 100,
+      platformPercent: (10_000 - bp) / 100,
+    });
+  }),
+);
+
+adminRouter.put(
+  '/settings/payout',
+  asyncHandler(async (req, res) => {
+    const { inspectorPercent } = parse(
+      z.object({ inspectorPercent: z.number().min(0).max(100) }),
+      req.body,
+    );
+    // Stored in basis points so 80.25% is representable without float drift.
+    const bp = Math.round(inspectorPercent * 100);
+    await setDefaultPayoutBp(bp);
+
+    res.json({
+      defaultPayoutPercentBp: bp,
+      inspectorPercent: bp / 100,
+      platformPercent: (10_000 - bp) / 100,
+      message:
+        'Saved. This applies to new bookings only — jobs already booked keep the split they were quoted at.',
+    });
+  }),
+);
+
+// ------------------------------------------------------------ price rules
+
+const priceRuleSchema = z.object({
+  kind: z.enum(['SQFT_TIER', 'AGE_OVER', 'ADD_ON']),
+  label: z.string().trim().min(2).max(160),
+  minValue: z.number().int().nullable().optional(),
+  maxValue: z.number().int().nullable().optional(),
+  amountCents: z.number().int(),
+  isActive: z.boolean().default(true),
+  sortOrder: z.number().int().default(0),
+});
+
+adminRouter.post(
+  '/services/:id/price-rules',
+  asyncHandler(async (req, res) => {
+    const body = parse(priceRuleSchema, req.body);
+
+    const service = await prisma.service.findUnique({ where: { id: req.params.id } });
+    if (!service) throw notFound('Service not found');
+
+    if (body.kind === 'SQFT_TIER') {
+      if (body.minValue == null) throw badRequest('A square-footage tier needs a lower bound');
+      if (body.maxValue != null && body.maxValue < body.minValue) {
+        throw badRequest('The upper bound cannot be below the lower bound');
+      }
+      // Overlapping tiers make the price depend on row order rather than on
+      // the property — refuse rather than quietly pick one.
+      const existing = await prisma.servicePriceRule.findMany({
+        where: { serviceId: service.id, kind: 'SQFT_TIER', isActive: true },
+      });
+      const lo = body.minValue;
+      const hi = body.maxValue ?? Number.MAX_SAFE_INTEGER;
+      const clash = existing.find(
+        (r) => lo <= (r.maxValue ?? Number.MAX_SAFE_INTEGER) && hi >= (r.minValue ?? 0),
+      );
+      if (clash) {
+        throw conflict(
+          `That range overlaps the existing tier "${clash.label}"`,
+          'OVERLAPPING_TIER',
+        );
+      }
+    }
+
+    if (body.kind === 'AGE_OVER' && body.minValue == null) {
+      throw badRequest('An age surcharge needs the age it starts at');
+    }
+
+    const rule = await prisma.servicePriceRule.create({
+      data: { ...body, serviceId: service.id },
+    });
+    res.status(201).json({ rule });
+  }),
+);
+
+adminRouter.patch(
+  '/price-rules/:id',
+  asyncHandler(async (req, res) => {
+    const body = parse(priceRuleSchema.partial(), req.body);
+    const rule = await prisma.servicePriceRule.update({ where: { id: req.params.id }, data: body });
+    res.json({ rule });
+  }),
+);
+
+adminRouter.delete(
+  '/price-rules/:id',
+  asyncHandler(async (req, res) => {
+    // Deactivate rather than delete: a past job's breakdown references this
+    // rule id, and removing the row would orphan that record.
+    const rule = await prisma.servicePriceRule.update({
+      where: { id: req.params.id },
+      data: { isActive: false },
+    });
+    res.json({ rule, message: 'Rule retired. Existing bookings are unaffected.' });
+  }),
+);
+
+// --------------------------------------------------- inspector credentials
+
+adminRouter.post(
+  '/credentials/:id/review',
+  asyncHandler(async (req, res) => {
+    const { decision, notes } = parse(
+      z.object({
+        decision: z.enum(['APPROVED', 'REJECTED', 'PENDING']),
+        notes: z.string().trim().max(500).optional(),
+      }),
+      req.body,
+    );
+
+    const credential = await prisma.inspectorCredential.update({
+      where: { id: req.params.id },
+      data: { reviewState: decision, reviewNotes: notes ?? null },
+    });
+    res.json({ credential });
+  }),
+);
+
+/**
+ * Credentials expiring soon, or already expired (SOP §4: "support future
+ * license/insurance expiration alerts and eligibility suspension"). This is the
+ * query a scheduled alert job will call; exposing it now means the admin can
+ * already see what is lapsing.
+ */
+adminRouter.get(
+  '/credentials/expiring',
+  asyncHandler(async (req, res) => {
+    const { days } = parse(
+      z.object({ days: z.coerce.number().int().min(1).max(365).default(60) }),
+      req.query,
+    );
+    const horizon = new Date(Date.now() + days * 86_400_000);
+
+    const credentials = await prisma.inspectorCredential.findMany({
+      where: { expiresAt: { not: null, lte: horizon } },
+      orderBy: { expiresAt: 'asc' },
+      include: {
+        provider: {
+          select: {
+            id: true,
+            businessName: true,
+            status: true,
+            user: { select: { fullName: true, email: true, phone: true } },
+          },
+        },
+      },
+    });
+
+    const now = new Date();
+    res.json({
+      days,
+      credentials: credentials.map((c) => ({
+        ...c,
+        expired: c.expiresAt ? c.expiresAt < now : false,
+      })),
+    });
   }),
 );

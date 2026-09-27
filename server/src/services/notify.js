@@ -34,10 +34,10 @@ async function getTwilioClient() {
 }
 
 const money = (cents, currency = env.currency) =>
-  new Intl.NumberFormat('en-AU', { style: 'currency', currency }).format(cents / 100);
+  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100);
 
 const when = (date) =>
-  new Intl.DateTimeFormat('en-AU', {
+  new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
     day: 'numeric',
     month: 'short',

@@ -29,7 +29,7 @@ export const env = {
   authRateLimitMax: int(process.env.AUTH_RATE_LIMIT_MAX, 20),
   authRateLimitWindowMin: int(process.env.AUTH_RATE_LIMIT_WINDOW_MIN, 15),
 
-  currency: (process.env.CURRENCY || 'AUD').toUpperCase(),
+  currency: (process.env.CURRENCY || 'USD').toUpperCase(),
   paymentsDriver: process.env.PAYMENTS_DRIVER || 'mock',
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || '',
   stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',

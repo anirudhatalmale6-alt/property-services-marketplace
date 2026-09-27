@@ -96,7 +96,7 @@ export default function Orders() {
                       {dateTimeFull(j.scheduledStart)}
                     </p>
                     <p className="text-[13.5px] text-[var(--color-ink-3)]">
-                      {[j.address.line1, j.address.city, j.address.postcode].filter(Boolean).join(', ')}
+                      {[j.address.line1, j.address.city, j.address.zip].filter(Boolean).join(', ')}
                       {j.provider && ` · ${j.provider.businessName}`}
                     </p>
                   </div>

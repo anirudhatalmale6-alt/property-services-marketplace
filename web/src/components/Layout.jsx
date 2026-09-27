@@ -83,13 +83,13 @@ export default function Layout() {
                   className="block text-[15px] leading-tight truncate"
                   style={{ fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '-.02em' }}
                 >
-                  Property Services
+                  Home Inspection
                 </span>
                 <span
                   className="block text-[9.5px] tracking-[.18em] uppercase"
                   style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,.5)' }}
                 >
-                  Inspections &amp; Maintenance
+                  Licensed inspectors, nationwide
                 </span>
               </span>
             </Link>
@@ -228,7 +228,7 @@ export default function Layout() {
       <footer className="border-t mt-4" style={{ background: 'var(--color-paper-2)' }}>
         <div className="mx-auto max-w-6xl px-4 py-6 flex flex-wrap items-center justify-between gap-3">
           <p className="text-[13px] text-[var(--color-ink-3)]">
-            Licensed &amp; insured providers · Fixed prices · Reports you can rely on
+            Licensed &amp; insured inspectors · Fixed prices · Reports you can rely on
           </p>
           <p className="ref text-[11px] text-[var(--color-ink-3)]">MVP BUILD · PHASE 1</p>
         </div>

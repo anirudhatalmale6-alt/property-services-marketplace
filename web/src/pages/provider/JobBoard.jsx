@@ -179,7 +179,7 @@ export default function JobBoard() {
                     {timeOnly(j.scheduledEnd)}
                   </p>
                   <p className="text-[13.5px] text-[var(--color-ink-3)]">
-                    {j.address.city} {j.address.postcode} · {j.area?.name} ·{' '}
+                    {j.address.city} {j.address.zip} · {j.area?.name} ·{' '}
                     {duration(j.service.durationMinutes)} on site · {relative(j.scheduledStart)}
                   </p>
 

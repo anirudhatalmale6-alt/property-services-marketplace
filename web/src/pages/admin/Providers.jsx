@@ -53,7 +53,7 @@ export default function AdminProviders() {
       <PageHead
         eyebrow="Supply"
         title="Providers"
-        sub="Verify licences and insurance, then approve. Only approved providers can see or accept work."
+        sub="Verify licenses and insurance, then approve. Only approved providers can see or accept work."
       />
 
       <div className="flex flex-wrap gap-2.5 mb-5">

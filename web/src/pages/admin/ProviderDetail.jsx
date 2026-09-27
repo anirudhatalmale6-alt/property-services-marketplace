@@ -28,7 +28,7 @@ import {
 
 const DOC_LABEL = {
   IDENTITY: 'Photo ID',
-  LICENCE: 'Trade licence',
+  LICENSE: 'Trade license',
   INSURANCE: 'Public liability insurance',
   OTHER: 'Other document',
 };
@@ -69,7 +69,7 @@ export default function AdminProviderDetail() {
   const { provider: p, currency } = data;
   const onboardingDocs = p.documents.filter((d) => d.kind !== 'JOB_REPORT' && d.kind !== 'JOB_PHOTO');
   const kinds = new Set(onboardingDocs.map((d) => d.kind));
-  const missing = ['IDENTITY', 'LICENCE', 'INSURANCE'].filter((k) => !kinds.has(k));
+  const missing = ['IDENTITY', 'LICENSE', 'INSURANCE'].filter((k) => !kinds.has(k));
   const blockers = [
     ...missing.map((k) => `missing ${DOC_LABEL[k].toLowerCase()}`),
     p.services.length === 0 && 'no services selected',
@@ -357,8 +357,8 @@ export default function AdminProviderDetail() {
           <Card className="p-4 sm:p-5">
             <Eyebrow className="mb-3">Details</Eyebrow>
             <div className="rule pt-2">
-              <Row label="ABN / licence" mono>
-                {p.abnOrLicenceNo || '—'}
+              <Row label="ABN / license" mono>
+                {p.legalName || '—'}
               </Row>
               <Row label="Joined" mono>
                 {dateTimeFull(p.user.createdAt)}
@@ -398,7 +398,7 @@ export default function AdminProviderDetail() {
               <ul className="space-y-1 text-[14px]">
                 {p.areas.map((a) => (
                   <li key={a.id}>
-                    · {a.name} <span className="text-[var(--color-ink-3)]">({a.region})</span>
+                    · {a.name} <span className="text-[var(--color-ink-3)]">({a.state})</span>
                   </li>
                 ))}
               </ul>

@@ -40,12 +40,22 @@ export default function Book() {
     line1: '',
     line2: '',
     city: '',
-    region: '',
-    postcode: '',
+    state: '',
+    zip: '',
     notes: '',
   });
   const [coverage, setCoverage] = useState(null);
   const [checkingCoverage, setCheckingCoverage] = useState(false);
+
+  // Property details that drive the price (SOP §3.3).
+  const [squareFeet, setSquareFeet] = useState('');
+  const [yearBuilt, setYearBuilt] = useState('');
+  const [addOns, setAddOns] = useState([]);
+  const [selectedAddOns, setSelectedAddOns] = useState([]);
+  const [payerType, setPayerType] = useState('CUSTOMER');
+  const [payerName, setPayerName] = useState('');
+  const [liveQuote, setLiveQuote] = useState(null);
+  const [quoting, setQuoting] = useState(false);
 
   // Time
   const [availability, setAvailability] = useState(null);
@@ -81,6 +91,55 @@ export default function Book() {
     }
   }, [params, catalog, service]);
 
+  // Each service declares its own add-ons and which details it collects, so
+  // the form is built from the catalogue rather than hard-coded per service.
+  useEffect(() => {
+    if (!service?.slug) return;
+    api.catalog
+      .service(service.slug)
+      .then((r) => {
+        setAddOns(r.addOns ?? []);
+        setService((prev) => (prev ? { ...prev, ...r.service } : prev));
+      })
+      .catch(() => setAddOns([]));
+    setSelectedAddOns([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [service?.slug]);
+
+  /**
+   * Live price. Debounced, and re-quoted whenever an input that affects it
+   * changes. This is an estimate for display — the binding number is
+   * recalculated server-side at booking.
+   */
+  useEffect(() => {
+    if (!service?.id) return undefined;
+    const needsSqft = service.collectsSquareFeet && !squareFeet;
+    const needsYear = service.collectsYearBuilt && !yearBuilt;
+    if (needsSqft || needsYear) {
+      setLiveQuote(null);
+      return undefined;
+    }
+
+    setQuoting(true);
+    const t = setTimeout(() => {
+      api.catalog
+        .quote({
+          serviceId: service.id,
+          squareFeet: squareFeet ? Number(squareFeet) : undefined,
+          yearBuilt: yearBuilt ? Number(yearBuilt) : undefined,
+          addOnIds: selectedAddOns,
+        })
+        .then(setLiveQuote)
+        .catch(() => setLiveQuote(null))
+        .finally(() => setQuoting(false));
+    }, 300);
+
+    return () => {
+      clearTimeout(t);
+      setQuoting(false);
+    };
+  }, [service?.id, service?.collectsSquareFeet, service?.collectsYearBuilt, squareFeet, yearBuilt, selectedAddOns]);
+
   useEffect(() => {
     if (!user || user.role !== 'CUSTOMER') return;
     api.bookings
@@ -91,18 +150,18 @@ export default function Book() {
 
   /* ------------------------------------------------------------ coverage */
 
-  const activePostcode = addressId
-    ? savedAddresses.find((a) => a.id === addressId)?.postcode
-    : addr.postcode;
+  const activeZip = addressId
+    ? savedAddresses.find((a) => a.id === addressId)?.zip
+    : addr.zip;
 
-  const checkCoverage = useCallback(async (postcode) => {
-    if (!postcode || postcode.trim().length < 3) {
+  const checkCoverage = useCallback(async (zip) => {
+    if (!zip || zip.trim().length < 3) {
       setCoverage(null);
       return;
     }
     setCheckingCoverage(true);
     try {
-      setCoverage(await api.catalog.coverage(postcode.trim()));
+      setCoverage(await api.catalog.coverage(zip.trim()));
     } catch {
       setCoverage(null);
     } finally {
@@ -110,28 +169,28 @@ export default function Book() {
     }
   }, []);
 
-  // Debounced so typing a postcode doesn't fire four requests.
+  // Debounced so typing a zip doesn't fire four requests.
   useEffect(() => {
     if (step !== 1) return undefined;
-    const t = setTimeout(() => checkCoverage(activePostcode), 350);
+    const t = setTimeout(() => checkCoverage(activeZip), 350);
     return () => clearTimeout(t);
-  }, [activePostcode, step, checkCoverage]);
+  }, [activeZip, step, checkCoverage]);
 
   /* --------------------------------------------------------- availability */
 
   useEffect(() => {
-    if (step !== 2 || !service || !activePostcode) return;
+    if (step !== 2 || !service || !activeZip) return;
     setLoadingSlots(true);
     setAvailability(null);
     api.catalog
-      .availability({ serviceId: service.id, postcode: activePostcode, days: 14 })
+      .availability({ serviceId: service.id, zip: activeZip, days: 14 })
       .then((r) => {
         setAvailability(r);
         setActiveDate(r.days[0]?.date ?? null);
       })
       .catch((e) => setError(e))
       .finally(() => setLoadingSlots(false));
-  }, [step, service, activePostcode]);
+  }, [step, service, activeZip]);
 
   const slotsForActiveDate = useMemo(
     () => availability?.days.find((d) => d.date === activeDate)?.slots ?? [],
@@ -144,8 +203,8 @@ export default function Book() {
     addressId ||
     (addr.line1.trim().length > 2 &&
       addr.city.trim().length > 1 &&
-      addr.region.trim().length > 1 &&
-      addr.postcode.trim().length > 2);
+      addr.state.trim().length > 1 &&
+      addr.zip.trim().length > 2);
 
   const goToTime = () => {
     setError(null);
@@ -154,7 +213,15 @@ export default function Book() {
       return;
     }
     if (coverage && !coverage.covered) {
-      setError(new Error(`We don't cover ${activePostcode} yet.`));
+      setError(new Error(`We don't cover ${activeZip} yet.`));
+      return;
+    }
+    if (service?.collectsSquareFeet && !squareFeet) {
+      setError(new Error('Please give the approximate square footage — it affects the price.'));
+      return;
+    }
+    if (service?.collectsYearBuilt && !yearBuilt) {
+      setError(new Error('Please give the year the property was built — it affects the price.'));
       return;
     }
     setStep(2);
@@ -169,6 +236,11 @@ export default function Book() {
         serviceId: service.id,
         scheduledStart: slot.start,
         customerNotes: notes || undefined,
+        ...(squareFeet ? { squareFeet: Number(squareFeet) } : {}),
+        ...(yearBuilt ? { yearBuilt: Number(yearBuilt) } : {}),
+        addOnIds: selectedAddOns,
+        payerType,
+        ...(payerType !== 'CUSTOMER' && payerName.trim() ? { payerName: payerName.trim() } : {}),
         ...(addressId ? { addressId } : { address: cleanAddress(addr) }),
       };
       const r = await api.bookings.create(payload);
@@ -284,7 +356,7 @@ export default function Book() {
                   >
                     <p className="font-semibold text-[15px]">{a.label || a.line1}</p>
                     <p className="text-[14px] text-[var(--color-ink-2)]">
-                      {[a.line1, a.city, a.region, a.postcode].filter(Boolean).join(', ')}
+                      {[a.line1, a.city, a.state, a.zip].filter(Boolean).join(', ')}
                     </p>
                   </button>
                 ))}
@@ -314,25 +386,25 @@ export default function Book() {
                   />
                 </Field>
                 <div className="grid sm:grid-cols-3 gap-4">
-                  <Field label="Suburb" required error={fieldErrors['address.city']}>
+                  <Field label="City" required error={fieldErrors['address.city']}>
                     <Input
                       value={addr.city}
                       onChange={(e) => setAddr({ ...addr, city: e.target.value })}
                       autoComplete="address-level2"
                     />
                   </Field>
-                  <Field label="State" required error={fieldErrors['address.region']}>
+                  <Field label="State" required error={fieldErrors['address.state']}>
                     <Input
-                      value={addr.region}
-                      onChange={(e) => setAddr({ ...addr, region: e.target.value })}
+                      value={addr.state}
+                      onChange={(e) => setAddr({ ...addr, state: e.target.value })}
                       placeholder="QLD"
                       autoComplete="address-level1"
                     />
                   </Field>
-                  <Field label="Postcode" required error={fieldErrors['address.postcode']}>
+                  <Field label="ZIP code" required error={fieldErrors['address.zip']}>
                     <Input
-                      value={addr.postcode}
-                      onChange={(e) => setAddr({ ...addr, postcode: e.target.value })}
+                      value={addr.zip}
+                      onChange={(e) => setAddr({ ...addr, zip: e.target.value })}
                       inputMode="numeric"
                       maxLength={12}
                       autoComplete="postal-code"
@@ -353,20 +425,160 @@ export default function Book() {
             </Card>
           )}
 
+          {/* ------------------------------------------- property details */}
+          {(service?.collectsSquareFeet || service?.collectsYearBuilt || addOns.length > 0) && (
+            <Card className="p-4 sm:p-5">
+              <Eyebrow className="mb-1.5">About the property</Eyebrow>
+              <p className="text-[13.5px] text-[var(--color-ink-3)] mb-4">
+                These affect the price, so the figure you see at checkout is the figure you pay.
+              </p>
+
+              <div className="grid sm:grid-cols-2 gap-4">
+                {service.collectsSquareFeet && (
+                  <Field
+                    label="Approximate square footage"
+                    required
+                    error={fieldErrors.squareFeet}
+                    hint="Living area. An estimate is fine."
+                  >
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min="100"
+                      max="50000"
+                      value={squareFeet}
+                      onChange={(e) => setSquareFeet(e.target.value)}
+                      placeholder="2,400"
+                    />
+                  </Field>
+                )}
+
+                {service.collectsYearBuilt && (
+                  <Field label="Year built" required error={fieldErrors.yearBuilt}>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min="1800"
+                      max={new Date().getFullYear()}
+                      value={yearBuilt}
+                      onChange={(e) => setYearBuilt(e.target.value)}
+                      placeholder="1998"
+                    />
+                  </Field>
+                )}
+              </div>
+
+              {addOns.length > 0 && (
+                <div className="mt-4">
+                  <Eyebrow className="mb-2.5">Add anything else?</Eyebrow>
+                  <div className="space-y-2">
+                    {addOns.map((a) => {
+                      const on = selectedAddOns.includes(a.id);
+                      return (
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() =>
+                            setSelectedAddOns((prev) =>
+                              on ? prev.filter((x) => x !== a.id) : [...prev, a.id],
+                            )
+                          }
+                          className={`pick ${on ? 'pick-on' : ''}`}
+                          style={{ padding: '0.65rem 0.85rem' }}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-semibold text-[14.5px]">
+                              {on ? '☑' : '☐'} {a.label}
+                            </span>
+                            <span className="ref text-[14px] flex-none">
+                              +{money(a.amountCents, catalog.currency)}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Itemised live price — no surprises at checkout. */}
+              {liveQuote && (
+                <div className="rule mt-4 pt-3.5">
+                  <Eyebrow className="mb-2.5">Your price</Eyebrow>
+                  <div className="space-y-1">
+                    {liveQuote.lines.map((l, i) => (
+                      <div key={i} className="flex justify-between gap-4 text-[14px]">
+                        <span className="text-[var(--color-ink-2)]">{l.label}</span>
+                        <span className="ref flex-none">
+                          {l.amountCents === 0 ? '—' : money(l.amountCents, liveQuote.currency)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="rule mt-2.5 pt-2.5 flex items-end justify-between">
+                    <span className="label mb-0">Total</span>
+                    <span
+                      className="text-[24px] leading-none tnum"
+                      style={{ fontFamily: 'var(--font-display)', fontWeight: 700 }}
+                    >
+                      {money(liveQuote.priceCents, liveQuote.currency)}
+                    </span>
+                  </div>
+                </div>
+              )}
+              {quoting && !liveQuote && (
+                <p className="text-[13px] text-[var(--color-ink-3)] mt-3.5 flex items-center gap-2">
+                  <Spinner /> Working out your price…
+                </p>
+              )}
+            </Card>
+          )}
+
+          {/* ------------------------------------------------ who is paying */}
+          <Card className="p-4 sm:p-5">
+            <Eyebrow className="mb-2.5">Who&apos;s paying?</Eyebrow>
+            <div className="grid sm:grid-cols-3 gap-2">
+              {[
+                ['CUSTOMER', 'Me'],
+                ['REALTOR', 'My realtor'],
+                ['COMPANY', 'A company account'],
+              ].map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setPayerType(v)}
+                  className={`pick ${payerType === v ? 'pick-on' : ''}`}
+                  style={{ padding: '0.7rem 0.85rem' }}
+                >
+                  <span className="font-semibold text-[14px]">{label}</span>
+                </button>
+              ))}
+            </div>
+            {payerType !== 'CUSTOMER' && (
+              <Field
+                label={payerType === 'REALTOR' ? 'Realtor / brokerage name' : 'Company name'}
+                className="mt-3.5"
+                hint="So our team can match the payment to the right account."
+              >
+                <Input value={payerName} onChange={(e) => setPayerName(e.target.value)} />
+              </Field>
+            )}
+          </Card>
+
           {/* Live coverage feedback, before they waste time picking a slot. */}
-          {activePostcode && activePostcode.length >= 3 && (
+          {activeZip && activeZip.length >= 3 && (
             <div aria-live="polite">
               {checkingCoverage ? (
                 <p className="text-[13.5px] text-[var(--color-ink-3)] flex items-center gap-2">
-                  <Spinner /> Checking coverage for {activePostcode}…
+                  <Spinner /> Checking coverage for {activeZip}…
                 </p>
               ) : coverage?.covered ? (
                 <Alert tone="go">
                   Good news — we cover <strong>{coverage.area.name}</strong> ({coverage.area.city},{' '}
-                  {coverage.area.region}).
+                  {coverage.area.state}).
                 </Alert>
               ) : coverage ? (
-                <Alert tone="hold" title={`We don't cover ${activePostcode} yet`}>
+                <Alert tone="hold" title={`We don't cover ${activeZip} yet`}>
                   We&apos;re expanding market by market. Nothing you enter here is lost — try a
                   different property, or check back soon.
                 </Alert>
@@ -400,7 +612,7 @@ export default function Book() {
           {!loadingSlots && availability && availability.days.length === 0 && (
             <Card className="p-2">
               <Empty title="No times available right now">
-                We don&apos;t have a provider free for this service in {activePostcode} over the next
+                We don&apos;t have a provider free for this service in {activeZip} over the next
                 two weeks. Try another service, or get in touch and we&apos;ll arrange it manually.
               </Empty>
             </Card>
@@ -517,7 +729,7 @@ export default function Book() {
                 {dateLong(job.scheduledStart)}, {timeOnly(job.scheduledStart)}–{timeOnly(job.scheduledEnd)}
               </Row>
               <Row label="Property">
-                {[job.address.line1, job.address.city, job.address.region, job.address.postcode]
+                {[job.address.line1, job.address.city, job.address.state, job.address.zip]
                   .filter(Boolean)
                   .join(', ')}
               </Row>
@@ -595,7 +807,7 @@ function ServiceSummary({ service, currency, onChange }) {
 
 /** Drop empty optional fields so the API's optional-string rules are satisfied. */
 function cleanAddress(a) {
-  const out = { line1: a.line1.trim(), city: a.city.trim(), region: a.region.trim(), postcode: a.postcode.trim() };
+  const out = { line1: a.line1.trim(), city: a.city.trim(), state: a.state.trim(), zip: a.zip.trim() };
   if (a.line2?.trim()) out.line2 = a.line2.trim();
   if (a.notes?.trim()) out.notes = a.notes.trim();
   return out;

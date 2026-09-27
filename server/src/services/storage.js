@@ -5,7 +5,7 @@
  *  1. The stored filename is generated, never taken from the upload. A client
  *     controlled name is how "../" and "shell.php" get on to a disk.
  *  2. Uploads are served back only through an authenticated API route, so a
- *     provider's licence or a job report is never a guessable public URL.
+ *     provider's license or a job report is never a guessable public URL.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
