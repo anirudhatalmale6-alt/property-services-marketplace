@@ -1,0 +1,465 @@
+// Property services marketplace — Phase 1 (MVP) data model.
+//
+// Design notes that matter for the "expand nationwide" requirement:
+//  * Geography is DATA, not code. A ServiceArea row (postcode/city/region) is
+//    what makes a market live. Launching a new state = inserting rows.
+//  * Money is stored in integer minor units (cents). Never floats.
+//  * Job state lives in ONE enum on Job, and every transition is appended to
+//    JobEvent, so "track the status of their order" and the admin audit trail
+//    read from the same source.
+//  * A Job is claimed with a conditional UPDATE (see assignment.js), so two
+//    providers tapping Accept at the same instant cannot both win.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  PROVIDER
+  ADMIN
+}
+
+enum ProviderStatus {
+  DRAFT // account made, onboarding not submitted
+  PENDING // submitted, waiting on admin review
+  APPROVED // may see and accept jobs
+  REJECTED
+  SUSPENDED
+}
+
+enum JobStatus {
+  PENDING_PAYMENT // booked but checkout not completed
+  OPEN // paid, on the marketplace, nobody assigned
+  ASSIGNED // a provider has claimed it
+  EN_ROUTE
+  IN_PROGRESS
+  AWAITING_REPORT // work done, required document not yet uploaded
+  COMPLETED // report in, ready for payout
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  REQUIRES_PAYMENT
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING // job complete, owed to provider
+  PROCESSING
+  PAID
+  FAILED
+}
+
+enum DocumentKind {
+  LICENCE // provider onboarding: trade licence
+  INSURANCE // provider onboarding: liability cover
+  IDENTITY // provider onboarding: photo ID
+  JOB_REPORT // deliverable for a completed job
+  JOB_PHOTO
+  OTHER
+}
+
+enum DocumentReviewState {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum ExceptionKind {
+  PAYMENT_FAILED
+  NO_PROVIDER_FOUND // job sat OPEN past its window
+  JOB_OVERDUE
+  REPORT_MISSING
+  PAYOUT_FAILED
+  REFUND_REQUESTED
+  PROVIDER_CANCELLED
+  OTHER
+}
+
+enum ExceptionStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+// ---------------------------------------------------------------- identity
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  phone        String?
+  passwordHash String
+  fullName     String
+  role         Role     @default(CUSTOMER)
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customer       CustomerProfile?
+  provider       ProviderProfile?
+  addresses      Address[]
+  jobs           Job[] // jobs booked as the customer
+  notifications  Notification[]
+  refreshTokens  RefreshToken[]
+  resolvedIssues JobException[]  @relation("ExceptionResolver")
+  reviewedDocs   Document[]      @relation("DocumentReviewer")
+
+  @@index([role])
+}
+
+// Rotating refresh tokens — storing the hash so a DB leak can't mint sessions.
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model CustomerProfile {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ProviderProfile {
+  id             String         @id @default(uuid())
+  userId         String         @unique
+  businessName   String
+  abnOrLicenceNo String?
+  bio            String?
+  status         ProviderStatus @default(DRAFT)
+  submittedAt    DateTime?
+  reviewedAt     DateTime?
+  reviewNotes    String?
+  payoutRef      String? // Stripe connected account id, once onboarded
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user       User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services   ProviderService[]
+  areas      ProviderServiceArea[]
+  documents  Document[]
+  jobs       Job[]
+  payouts    Payout[]
+
+  @@index([status])
+}
+
+// ------------------------------------------------------------ catalogue
+
+model ServiceCategory {
+  id       String    @id @default(uuid())
+  name     String    @unique
+  slug     String    @unique
+  sortOrder Int      @default(0)
+  services Service[]
+}
+
+model Service {
+  id               String  @id @default(uuid())
+  categoryId       String
+  name             String
+  slug             String  @unique
+  shortDescription String
+  description      String
+  // Fixed-price MVP: what the customer pays, and the provider's cut.
+  basePriceCents   Int
+  providerPayCents Int
+  durationMinutes  Int     @default(60)
+  requiresReport   Boolean @default(true)
+  isActive         Boolean @default(true)
+  sortOrder        Int     @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  category  ServiceCategory   @relation(fields: [categoryId], references: [id])
+  providers ProviderService[]
+  jobs      Job[]
+
+  @@index([isActive])
+}
+
+model ProviderService {
+  providerId String
+  serviceId  String
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  service  Service         @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([providerId, serviceId])
+}
+
+// A market. Rows here are what "we operate in this place" means — no code
+// knows about any particular city.
+model ServiceArea {
+  id        String   @id @default(uuid())
+  name      String // "Brisbane North"
+  postcode  String
+  city      String
+  region    String // state / province
+  country   String   @default("AU")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  providers ProviderServiceArea[]
+  jobs      Job[]
+
+  @@unique([postcode, country])
+  @@index([region])
+  @@index([isActive])
+}
+
+model ProviderServiceArea {
+  providerId    String
+  serviceAreaId String
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  area     ServiceArea     @relation(fields: [serviceAreaId], references: [id], onDelete: Cascade)
+
+  @@id([providerId, serviceAreaId])
+}
+
+model Address {
+  id        String   @id @default(uuid())
+  userId    String
+  label     String? // "Home", "Rental #2"
+  line1     String
+  line2     String?
+  city      String
+  region    String
+  postcode  String
+  country   String   @default("AU")
+  notes     String? // gate code, dog on site, lockbox
+  createdAt DateTime @default(now())
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobs Job[]
+
+  @@index([userId])
+}
+
+// ------------------------------------------------------------------- work
+
+model Job {
+  id            String    @id @default(uuid())
+  reference     String    @unique // human-quotable: PS-7F3K9Q
+  customerId    String
+  serviceId     String
+  addressId     String
+  serviceAreaId String?
+  providerId    String?
+
+  status JobStatus @default(PENDING_PAYMENT)
+
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  customerNotes  String?
+
+  // Price snapshotted at booking. Changing the catalogue later must never
+  // retroactively alter what someone was charged.
+  priceCents       Int
+  providerPayCents Int
+
+  assignedAt  DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+  cancelReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer   User            @relation(fields: [customerId], references: [id])
+  service    Service         @relation(fields: [serviceId], references: [id])
+  address    Address         @relation(fields: [addressId], references: [id])
+  area       ServiceArea?    @relation(fields: [serviceAreaId], references: [id])
+  provider   ProviderProfile? @relation(fields: [providerId], references: [id])
+  events     JobEvent[]
+  documents  Document[]
+  payment    Payment?
+  payout     Payout?
+  exceptions JobException[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([providerId])
+  @@index([serviceAreaId, status])
+  @@index([scheduledStart])
+}
+
+// Append-only transition log. Both the customer tracker and the admin audit
+// view render from this, so they can never disagree.
+model JobEvent {
+  id        String     @id @default(uuid())
+  jobId     String
+  fromStatus JobStatus?
+  toStatus  JobStatus
+  actorId   String?
+  actorRole Role?
+  note      String?
+  createdAt DateTime   @default(now())
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+}
+
+model Document {
+  id          String       @id @default(uuid())
+  kind        DocumentKind
+  providerId  String?
+  jobId       String?
+  // Storage is behind an adapter: `key` is local-disk-relative in dev and an
+  // object key in S3 in production. Callers never build a path themselves.
+  storageKey  String
+  fileName    String
+  mimeType    String
+  sizeBytes   Int
+  reviewState DocumentReviewState @default(PENDING)
+  reviewedById String?
+  reviewedAt  DateTime?
+  reviewNotes String?
+  expiresAt   DateTime? // insurance/licence expiry
+  createdAt   DateTime     @default(now())
+
+  provider   ProviderProfile? @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  job        Job?             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  reviewedBy User?            @relation("DocumentReviewer", fields: [reviewedById], references: [id])
+
+  @@index([providerId, kind])
+  @@index([jobId])
+  @@index([reviewState])
+}
+
+// ----------------------------------------------------------------- money
+
+model Payment {
+  id            String        @id @default(uuid())
+  jobId         String        @unique
+  amountCents   Int
+  currency      String        @default("AUD")
+  status        PaymentStatus @default(REQUIRES_PAYMENT)
+  provider      String        @default("stripe")
+  externalId    String? // payment intent id
+  clientSecret  String?
+  failureReason String?
+  paidAt        DateTime?
+  refundedCents Int           @default(0)
+  refundedAt    DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+model Payout {
+  id            String       @id @default(uuid())
+  jobId         String       @unique
+  providerId    String
+  amountCents   Int
+  currency      String       @default("AUD")
+  status        PayoutStatus @default(PENDING)
+  externalId    String?
+  failureReason String?
+  paidAt        DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  job      Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  provider ProviderProfile @relation(fields: [providerId], references: [id])
+
+  @@index([providerId, status])
+  @@index([status])
+}
+
+// Idempotency guard for payment webhooks: a provider retrying a delivery must
+// not credit a job twice.
+model WebhookEvent {
+  id          String   @id @default(uuid())
+  provider    String
+  externalId  String
+  type        String
+  payload     Json
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@unique([provider, externalId])
+}
+
+// -------------------------------------------------------- comms + triage
+
+model Notification {
+  id          String              @id @default(uuid())
+  userId      String?
+  channel     NotificationChannel
+  template    String
+  recipient   String // email address or E.164 number, snapshotted
+  subject     String?
+  body        String
+  status      NotificationStatus  @default(QUEUED)
+  error       String?
+  sentAt      DateTime?
+  createdAt   DateTime            @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([userId])
+}
+
+model JobException {
+  id           String          @id @default(uuid())
+  jobId        String?
+  kind         ExceptionKind
+  status       ExceptionStatus @default(OPEN)
+  detail       String
+  resolvedById String?
+  resolvedAt   DateTime?
+  resolution   String?
+  createdAt    DateTime        @default(now())
+
+  job        Job?  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  resolvedBy User? @relation("ExceptionResolver", fields: [resolvedById], references: [id])
+
+  @@index([status, kind])
+  @@index([jobId])
+}
+
+// Key/value platform settings so an admin can change behaviour without a deploy.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

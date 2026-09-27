@@ -1,0 +1,579 @@
+@import 'tailwindcss';
+
+/*
+  Design language: "technical document".
+  The reference points are surveyors' plans, compliance certificates and job
+  dockets — warm paper, ink navy, hairline rules, hi-vis orange for the one
+  action that matters, and monospace wherever a number or reference appears so
+  it reads like a record rather than marketing copy.
+*/
+
+@theme {
+  /* ground + surfaces */
+  --color-paper: #f4f1ea;
+  --color-paper-2: #ebe6db;
+  --color-surface: #ffffff;
+  --color-rule: #ddd8cc;
+  --color-rule-strong: #c4bdac;
+
+  /* ink */
+  --color-ink: #141a1f;
+  --color-ink-2: #3d464e;
+  --color-ink-3: #6b7480;
+  --color-navy: #16232e;
+  --color-navy-2: #23394a;
+
+  /* hi-vis accent — used sparingly, for the primary action only */
+  --color-hivis: #e8590c;
+  --color-hivis-dark: #c2410c;
+  --color-hivis-wash: #fdf0e6;
+
+  /* status */
+  --color-go: #1f7a4c;
+  --color-go-wash: #e8f4ed;
+  --color-hold: #b45309;
+  --color-hold-wash: #fdf4e3;
+  --color-stop: #b3261e;
+  --color-stop-wash: #fbeceb;
+  --color-info: #1e5f8f;
+  --color-info-wash: #e9f1f8;
+
+  --font-display: 'Archivo', system-ui, sans-serif;
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-rule);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    /*
+      Faint blueprint grid. 1px lines at low contrast read as paper texture at
+      arm's length and vanish on a phone — atmosphere without noise.
+    */
+    background-image:
+      linear-gradient(to right, rgba(20, 26, 31, 0.035) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(20, 26, 31, 0.035) 1px, transparent 1px);
+    background-size: 28px 28px;
+    background-attachment: fixed;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.021em;
+    color: var(--color-ink);
+    line-height: 1.12;
+  }
+
+  /* Numbers line up in columns — essential for money and schedules. */
+  td,
+  th,
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-hivis);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-hivis);
+    color: #fff;
+  }
+}
+
+@layer components {
+  /* ---------------------------------------------------------- structure */
+
+  .surface {
+    background: var(--color-surface);
+    border: 1px solid var(--color-rule);
+  }
+
+  /* The corner-tick motif: a drawing-sheet reference mark. */
+  .ticked {
+    position: relative;
+  }
+  .ticked::before,
+  .ticked::after {
+    content: '';
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    border-color: var(--color-rule-strong);
+    pointer-events: none;
+  }
+  .ticked::before {
+    top: -1px;
+    left: -1px;
+    border-top: 2px solid;
+    border-left: 2px solid;
+  }
+  .ticked::after {
+    bottom: -1px;
+    right: -1px;
+    border-bottom: 2px solid;
+    border-right: 2px solid;
+  }
+
+  .rule {
+    border-top: 1px solid var(--color-rule);
+  }
+
+  /* Section eyebrow: small, tracked-out, mono — a drawing label. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+
+  .ref {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  /* ------------------------------------------------------------ buttons */
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+    padding: 0.7rem 1.15rem;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition:
+      transform 90ms ease,
+      background-color 140ms ease,
+      box-shadow 140ms ease,
+      border-color 140ms ease;
+    /* Never smaller than a comfortable thumb target on a phone. */
+    min-height: 44px;
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--color-hivis);
+    color: #fff;
+    box-shadow: 0 1px 0 var(--color-hivis-dark);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-hivis-dark);
+  }
+
+  .btn-ink {
+    background: var(--color-navy);
+    color: #fff;
+  }
+  .btn-ink:hover:not(:disabled) {
+    background: var(--color-navy-2);
+  }
+
+  .btn-outline {
+    background: transparent;
+    color: var(--color-ink);
+    border-color: var(--color-rule-strong);
+  }
+  .btn-outline:hover:not(:disabled) {
+    background: var(--color-paper-2);
+    border-color: var(--color-ink-3);
+  }
+
+  .btn-quiet {
+    background: transparent;
+    color: var(--color-ink-2);
+    min-height: 36px;
+    padding: 0.4rem 0.6rem;
+  }
+  .btn-quiet:hover:not(:disabled) {
+    background: var(--color-paper-2);
+    color: var(--color-ink);
+  }
+
+  .btn-danger {
+    background: transparent;
+    color: var(--color-stop);
+    border-color: color-mix(in srgb, var(--color-stop) 35%, transparent);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--color-stop-wash);
+  }
+
+  .btn-sm {
+    font-size: 13.5px;
+    padding: 0.45rem 0.75rem;
+    min-height: 36px;
+  }
+
+  /* ------------------------------------------------------------- fields */
+
+  .label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+    margin-bottom: 0.4rem;
+  }
+
+  .input,
+  .select,
+  .textarea {
+    width: 100%;
+    background: var(--color-surface);
+    border: 1px solid var(--color-rule-strong);
+    border-radius: 3px;
+    padding: 0.65rem 0.75rem;
+    font-family: var(--font-sans);
+    font-size: 16px; /* 16px stops iOS zooming the page on focus */
+    color: var(--color-ink);
+    transition:
+      border-color 140ms ease,
+      box-shadow 140ms ease;
+  }
+  .input:focus,
+  .select:focus,
+  .textarea:focus {
+    outline: none;
+    border-color: var(--color-hivis);
+    box-shadow: 0 0 0 3px var(--color-hivis-wash);
+  }
+  .input[aria-invalid='true'],
+  .textarea[aria-invalid='true'] {
+    border-color: var(--color-stop);
+  }
+  .input::placeholder,
+  .textarea::placeholder {
+    color: #9aa3ad;
+  }
+
+  .field-error {
+    font-size: 13px;
+    color: var(--color-stop);
+    margin-top: 0.3rem;
+  }
+
+  /* ------------------------------------------------------------ badges */
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.45rem;
+    border-radius: 2px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .badge-go {
+    color: var(--color-go);
+    background: var(--color-go-wash);
+    border-color: color-mix(in srgb, var(--color-go) 28%, transparent);
+  }
+  .badge-hold {
+    color: var(--color-hold);
+    background: var(--color-hold-wash);
+    border-color: color-mix(in srgb, var(--color-hold) 28%, transparent);
+  }
+  .badge-stop {
+    color: var(--color-stop);
+    background: var(--color-stop-wash);
+    border-color: color-mix(in srgb, var(--color-stop) 28%, transparent);
+  }
+  .badge-info {
+    color: var(--color-info);
+    background: var(--color-info-wash);
+    border-color: color-mix(in srgb, var(--color-info) 28%, transparent);
+  }
+  .badge-hivis {
+    color: var(--color-hivis-dark);
+    background: var(--color-hivis-wash);
+    border-color: color-mix(in srgb, var(--color-hivis) 34%, transparent);
+  }
+  .badge-mute {
+    color: var(--color-ink-3);
+    background: var(--color-paper-2);
+    border-color: var(--color-rule-strong);
+  }
+
+  /* ------------------------------------------------------------- alerts */
+
+  .alert {
+    border: 1px solid;
+    border-left-width: 3px;
+    border-radius: 2px;
+    padding: 0.7rem 0.85rem;
+    font-size: 14px;
+  }
+  .alert-stop {
+    color: #7f1d1a;
+    background: var(--color-stop-wash);
+    border-color: color-mix(in srgb, var(--color-stop) 40%, transparent);
+  }
+  .alert-go {
+    color: #14532d;
+    background: var(--color-go-wash);
+    border-color: color-mix(in srgb, var(--color-go) 40%, transparent);
+  }
+  .alert-info {
+    color: #17415f;
+    background: var(--color-info-wash);
+    border-color: color-mix(in srgb, var(--color-info) 40%, transparent);
+  }
+  .alert-hold {
+    color: #713f12;
+    background: var(--color-hold-wash);
+    border-color: color-mix(in srgb, var(--color-hold) 40%, transparent);
+  }
+
+  /* -------------------------------------------------------------- table */
+
+  .dtable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  .dtable th {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--color-rule-strong);
+    white-space: nowrap;
+  }
+  .dtable td {
+    padding: 0.7rem 0.75rem;
+    border-bottom: 1px solid var(--color-rule);
+    vertical-align: middle;
+  }
+  .dtable tbody tr:hover {
+    background: color-mix(in srgb, var(--color-paper) 55%, transparent);
+  }
+  .dtable tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  /* Wide tables scroll inside their own frame; the page never scrolls sideways. */
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* --------------------------------------------------------- navigation */
+
+  .navlink {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.72);
+    padding: 0.4rem 0;
+    border-bottom: 2px solid transparent;
+    transition:
+      color 140ms ease,
+      border-color 140ms ease;
+    white-space: nowrap;
+  }
+  .navlink:hover {
+    color: #fff;
+  }
+  .navlink-active {
+    color: #fff;
+    border-bottom-color: var(--color-hivis);
+  }
+
+  /* Provider portal bottom bar — thumb-reachable on a phone. */
+  .tabbar-link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+    padding: 0.5rem 0.25rem;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+    border-top: 2px solid transparent;
+  }
+  .tabbar-link-active {
+    color: var(--color-hivis-dark);
+    border-top-color: var(--color-hivis);
+    background: var(--color-hivis-wash);
+  }
+
+  /* ------------------------------------------------------------ stepper */
+
+  .step-dot {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    flex: none;
+    border: 1.5px solid var(--color-rule-strong);
+    background: var(--color-surface);
+    color: var(--color-ink-3);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 2px;
+  }
+  .step-dot-active {
+    border-color: var(--color-hivis);
+    background: var(--color-hivis);
+    color: #fff;
+  }
+  .step-dot-done {
+    border-color: var(--color-go);
+    background: var(--color-go-wash);
+    color: var(--color-go);
+  }
+
+  /* --------------------------------------------------- slot / choice grid */
+
+  .chip {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 0.5rem 0.3rem;
+    border: 1px solid var(--color-rule-strong);
+    border-radius: 2px;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    cursor: pointer;
+    min-height: 42px;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease;
+  }
+  .chip:hover:not(:disabled) {
+    border-color: var(--color-ink-3);
+  }
+  .chip-on {
+    border-color: var(--color-hivis);
+    background: var(--color-hivis);
+    color: #fff;
+  }
+  .chip:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  /* A selectable card (service, provider candidate). */
+  .pick {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: var(--color-surface);
+    border: 1px solid var(--color-rule);
+    border-left: 3px solid var(--color-rule-strong);
+    padding: 1rem;
+    cursor: pointer;
+    transition:
+      border-color 140ms ease,
+      box-shadow 140ms ease,
+      transform 140ms ease;
+  }
+  .pick:hover {
+    border-left-color: var(--color-hivis);
+    box-shadow: 0 2px 10px rgba(20, 26, 31, 0.07);
+  }
+  .pick-on {
+    border-left-color: var(--color-hivis);
+    box-shadow: 0 2px 10px rgba(20, 26, 31, 0.07);
+  }
+
+  .link {
+    color: var(--color-info);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  .link:hover {
+    color: var(--color-hivis-dark);
+  }
+}
+
+@layer utilities {
+  /* Staggered entrance for lists — one orchestrated reveal, not scattered
+     micro-animations. Respects reduced-motion. */
+  .rise {
+    animation: rise 420ms cubic-bezier(0.22, 0.9, 0.3, 1) both;
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .pulse-dot {
+    animation: pulse-dot 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
